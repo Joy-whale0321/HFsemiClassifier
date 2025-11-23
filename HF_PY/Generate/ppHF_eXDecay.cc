@@ -145,7 +145,9 @@ int main(int argc, char* argv[])
     pythia.init();
 
     // --- ROOT 输出 ---
-    TFile* fout = new TFile(outName.c_str(), "RECREATE");
+    outDir = "/sphenix/user/jzhang1/HFsemiClassifier/HF_PY/Generate/DataSet/";
+    outNameFile = outDir + outName;
+    TFile* fout = new TFile(outNameFile.c_str(), "RECREATE");
     TTree* t    = new TTree("tree", "HF semi-leptonic electrons + away-side hadrons (event-wise)");
 
     // ========== TTree 变量（event-wise + vectors） ==========
