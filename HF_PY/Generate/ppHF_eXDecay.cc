@@ -129,16 +129,23 @@ int main(int argc, char* argv[])
 {
     int nEvent = 100000;
     std::string card = "ppHF.cmnd";
+    std::string outName = "ppHF_eXDecay_test.root";
 
     if (argc > 1) nEvent = std::atoi(argv[1]);
     if (argc > 2) card   = argv[2];
+    if (argc > 3) outName = argv[3]; 
+    if (argc > 4) seed    = std::atoi(argv[4]);
+
+    std::string seedStr = "Random:seed = " + std::to_string(seed);
 
     Pythia pythia;
     pythia.readFile(card);
+    pythia.readString("Random:setSeed = on");
+    pythia.readString(seedStr);
     pythia.init();
 
     // --- ROOT 输出 ---
-    TFile* fout = new TFile("ppHF_eXDecay_test.root", "RECREATE");
+    TFile* fout = new TFile(outName.c_str(), "RECREATE");
     TTree* t    = new TTree("tree", "HF semi-leptonic electrons + away-side hadrons (event-wise)");
 
     // ========== TTree 变量（event-wise + vectors） ==========

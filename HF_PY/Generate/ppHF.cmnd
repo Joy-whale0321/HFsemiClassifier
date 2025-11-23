@@ -1,6 +1,6 @@
 ! ========== Random seed ==========
-Random:setSeed = on
-Random:seed    = 12345
+! Random:setSeed = on
+! Random:seed    = 12345
 
 ! ========== Beam settings ==========
 Beams:idA = 2212
@@ -24,7 +24,7 @@ HardQCD:gg2bbbar = on
 HardQCD:qqbar2bbbar = on
 
 ! ========== Phase space cut in GeV ==========
-！PhaseSpace:pTHatMin = 2.0
+! PhaseSpace:pTHatMin = 2.0
 
 ! ========== ISR/FSR/shower ==========
 PartonLevel:ISR = on

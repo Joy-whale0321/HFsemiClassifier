@@ -45,10 +45,11 @@ Executable     = $(Initialdir)/runPhotonConv.sh
 
 nEvents        = 100000
 PYSet          = py_HF.cmnd
+outName        = ppHF_eXDecay_100k_$(Process).root
 
 # The argument to pass to the executable.
 #tracking firt then calo, only one tracking file
-Arguments      = "$(nEvents) $(PYSet)"
+Arguments      = "$(nEvents) $(PYSet) $(outName) $(Process)" 
 
 # The job's stdout is sent to this file.
 Output         = $(Initialdir)/log/job-Data-$(Process).out
