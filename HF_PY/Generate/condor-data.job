@@ -41,7 +41,7 @@ Rank=CPU_Speed
 Initialdir     = /sphenix/user/jzhang1/HFsemiClassifier/HF_PY/Generate
 
 # The executable we want to run.
-Executable     = $(Initialdir)/runPhotonConv.sh
+Executable     = $(Initialdir)/run_ppHF.sh
 
 nEvents        = 100000
 PYSet          = py_HF.cmnd
