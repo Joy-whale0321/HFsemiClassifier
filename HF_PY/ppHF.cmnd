@@ -1,0 +1,37 @@
+! ========== Random seed ==========
+Random:setSeed = on
+Random:seed    = 12345
+
+! ========== Beam settings ==========
+Beams:idA = 2212
+Beams:idB = 2212
+Beams:eCM = 200.0
+
+! ========== Tune setting ==========
+Tune:pp = 14
+
+MultipartonInteractions:pT0Ref      = 1.40
+MultipartonInteractions:ecmPow      = 0.135
+MultipartonInteractions:coreRadius  = 0.56
+MultipartonInteractions:coreFraction= 0.78
+ColourReconnection:range            = 5.4
+
+! ========== Hard processes ==========
+HardQCD:all      = off
+HardQCD:gg2ccbar = on
+HardQCD:qqbar2ccbar = on
+HardQCD:gg2bbbar = on
+HardQCD:qqbar2bbbar = on
+
+! ========== Phase space cut in GeV ==========
+！PhaseSpace:pTHatMin = 2.0
+
+! ========== ISR/FSR/shower ==========
+PartonLevel:ISR = on
+PartonLevel:FSR = on
+PartonLevel:MPI = on
+
+! ========== hadronization ==========
+HadronLevel:Hadronize = on
+HadronLevel:Decay     = on
+Print:quiet = on
