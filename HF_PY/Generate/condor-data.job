@@ -44,7 +44,7 @@ Initialdir     = /sphenix/user/jzhang1/HFsemiClassifier/HF_PY/Generate
 Executable     = $(Initialdir)/run_ppHF.sh
 
 nEvents        = 100000
-PYSet          = py_HF.cmnd
+PYSet          = ppHF.cmnd
 outName        = ppHF_eXDecay_100k_$(Process).root
 
 # The argument to pass to the executable.
