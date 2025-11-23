@@ -130,6 +130,7 @@ int main(int argc, char* argv[])
     int nEvent = 100000;
     std::string card = "ppHF.cmnd";
     std::string outName = "ppHF_eXDecay_test.root";
+    int seed = 12345;
 
     if (argc > 1) nEvent = std::atoi(argv[1]);
     if (argc > 2) card   = argv[2];
@@ -145,8 +146,8 @@ int main(int argc, char* argv[])
     pythia.init();
 
     // --- ROOT 输出 ---
-    outDir = "/sphenix/user/jzhang1/HFsemiClassifier/HF_PY/Generate/DataSet/";
-    outNameFile = outDir + outName;
+    std::string outDir = "/sphenix/user/jzhang1/HFsemiClassifier/HF_PY/Generate/DataSet/";
+    std::string outNameFile = outDir + outName;
     TFile* fout = new TFile(outNameFile.c_str(), "RECREATE");
     TTree* t    = new TTree("tree", "HF semi-leptonic electrons + away-side hadrons (event-wise)");
 
