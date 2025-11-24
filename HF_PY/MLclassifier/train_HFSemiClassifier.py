@@ -33,7 +33,7 @@ def parse_args():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=100,
+        default=200,
         help="训练轮数",
     )
     parser.add_argument(
@@ -63,7 +63,7 @@ def parse_args():
     parser.add_argument(
         "--fair-lambda",
         type=float,
-        default=0.2,
+        default=0.1,
         help="平衡两类之间loss差异的正则强度",
     )
 
@@ -147,7 +147,7 @@ def main():
         clf_hidden_dims=(128, 128, 128),
         n_classes=2,
         use_ele_in_had_encoder=False,
-        pooling="mean",
+        pooling="attn_mean",
     ).to(device)
 
     # loss function and optimizer setup
@@ -310,7 +310,7 @@ def main():
                 max_prob, preds = probs.max(dim=-1)              # (B,)
 
                 # threshold on validate dataset, same as train
-                thr_val = 0.8
+                thr_val = 0.5
                 keep_mask = (max_prob > thr_val)                 # (B,)
 
                 # statistics loss / eff_on_kept / per-class on kept samples

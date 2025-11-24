@@ -98,17 +98,19 @@ class DeepSetsHF(nn.Module):
             last_activation=False,
         )
 
-    def forward(self, ele_feat, had_feat, had_mask):
+    def forward(self, ele_feat, had_feat, had_mask, return_attn: bool = False):
         """
         参数
         ----
         ele_feat: (B, ele_dim)
         had_feat: (B, N, had_dim)
         had_mask: (B, N) bool
+        return_attn: 若为 True，则额外返回 attention 权重 alpha，shape = (B, N)
 
         返回
         ----
-        logits: (B, n_classes)
+        - 若 return_attn=False: logits: (B, n_classes)
+        - 若 return_attn=True : (logits, alpha)，其中 alpha 为 (B, N) 或 None（非 attn pooling 时）
         """
         B, N, _ = had_feat.shape
 
@@ -137,10 +139,12 @@ class DeepSetsHF(nn.Module):
         valid_counts = torch.clamp(valid_counts, min=1.0)
         had_mean = had_sum / valid_counts          # (B, set_embed_dim)
 
+        alpha = None  # 默认没有 attention
+
         # ========== attention pooling（可选） ==========
         if self.pooling in ("attn", "attn_mean"):
             # scores: (B, N, 1)
-            scores = self.attn_mlp(had_encoded)    # 对于 mask==0 的地方，反正 had_encoded=0，score 也会被屏蔽
+            scores = self.attn_mlp(had_encoded)    # 对于 mask==0 的地方，反正 had_encoded=0
             # 将 padding 的位置的score设为很小，防止参与softmax
             scores = scores.masked_fill(had_mask.unsqueeze(-1) == 0, -1e9)
             # alpha: (B, N, 1)
@@ -168,6 +172,15 @@ class DeepSetsHF(nn.Module):
         # ========== 分类器 ==========
         logits = self.classifier(joint_feat)  # (B, n_classes)
 
+        # ========== 按需返回 attention ==========
+        if return_attn:
+            if alpha is not None:
+                # alpha: (B, N, 1) -> (B, N)
+                alpha_out = alpha.squeeze(-1)
+            else:
+                alpha_out = None
+            return logits, alpha_out
+
         return logits
 
 
@@ -189,5 +202,6 @@ if __name__ == "__main__":
         pooling="attn_mean",  # 可以改成 "mean" / "sum" / "attn"
     )
 
-    logits = model(ele, had, mask)
+    logits, alpha = model(ele, had, mask, return_attn=True)
     print("logits shape:", logits.shape)  # 预期: (B, 3)
+    print("alpha shape:", None if alpha is None else alpha.shape)  # (B, N) for attn/attn_mean
