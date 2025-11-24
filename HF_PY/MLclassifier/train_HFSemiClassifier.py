@@ -21,50 +21,50 @@ def parse_args():
     parser.add_argument(
         "--root-file",
         type=str,
-        default="ppHF_eXDecay.root",
-        help="Pythia 生成的 ROOT 文件路径 (默认: ./ppHF_eXDecay.root)",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_1.root",
+        help="Pythia 生成的 ROOT 文件路径",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=256,
-        help="batch size (默认: 256)",
+        help="batch size",
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=20,
-        help="训练轮数 (默认: 20)",
+        default=100,
+        help="训练轮数",
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=1e-3,
-        help="学习率 (默认: 1e-3)",
+        default=1e-4,
+        help="学习率",
     )
     parser.add_argument(
         "--num-workers",
         type=int,
         default=0,
-        help="DataLoader 的 num_workers (默认: 0, 先保证不出错)",
+        help="DataLoader 的 num_workers",
     )
     parser.add_argument(
         "--out-dir",
         type=str,
-        default="/home/jingyu/HepSimTools/DataDir/HF_PY/MLclassifier/Weight_of_Model",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/MLclassifier/Weight_of_Model",
         help="模型权重输出目录",
     )
     parser.add_argument(
         "--val-frac",
         type=float,
-        default=0.2,
-        help="验证集占比 (默认: 0.2)",
+        default=0.3,
+        help="验证集占比",
     )
     parser.add_argument(
         "--fair-lambda",
         type=float,
         default=0.2,
-        help="平衡两类之间loss差异的正则强度 λ (默认: 0.1)",
+        help="平衡两类之间loss差异的正则强度",
     )
 
     return parser.parse_args()
