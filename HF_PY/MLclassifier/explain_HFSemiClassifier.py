@@ -2,7 +2,8 @@
 # explain_HFSemiClassifier.py
 #
 # 读取训练好的 DeepSetsHF 模型，导出每个 event 的 attention 权重，
-# 并简单打印前几个 event 的“最重要 hadron”。
+# 并简单打印前几个 event 的“最重要 hadron”，
+# 另外根据验证集的输出画 ROC 曲线并计算 AUC。
 
 import os
 import argparse
@@ -10,6 +11,7 @@ import argparse
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt   # 新增：用于画 ROC 曲线
 
 from data_HFSemiClassifier import HFSemiClassifier, hf_semi_collate
 from model_HFSemiClassifier import DeepSetsHF
@@ -54,7 +56,7 @@ def parse_args():
         "--out",
         type=str,
         default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/MLclassifier/attn_dump_val.npz",
-        help="输出 npz 文件路径",
+        help="输出 npz 文件路径（ROC 图也会用这个前缀）",
     )
     parser.add_argument(
         "--topk",
@@ -64,6 +66,85 @@ def parse_args():
     )
 
     return parser.parse_args()
+
+
+def compute_roc_auc(y_true, y_score):
+    """
+    简单实现一个二分类 ROC + AUC 计算（不依赖 sklearn）
+
+    参数
+    ----
+    y_true : array-like, shape (N,)
+        0/1 标签，这里我们约定 1 = B, 0 = D
+    y_score: array-like, shape (N,)
+        预测为正类(=1=B)的概率或得分
+
+    返回
+    ----
+    fpr, tpr, thresholds, auc_value
+    """
+    y_true = np.asarray(y_true).astype(np.int64)
+    y_score = np.asarray(y_score).astype(np.float64)
+
+    # 按 score 从大到小排序
+    desc_idx = np.argsort(-y_score)
+    y_true_sorted = y_true[desc_idx]
+    y_score_sorted = y_score[desc_idx]
+
+    # 总正例/负例数
+    P = np.sum(y_true_sorted == 1)
+    N = np.sum(y_true_sorted == 0)
+    if P == 0 or N == 0:
+        print("[WARN] Only one class present, ROC/AUC not well-defined.")
+        # 给一个退化的结果
+        return np.array([0.0, 1.0]), np.array([0.0, 1.0]), np.array([np.inf, -np.inf]), 0.5
+
+    # 逐个 threshold 扫描
+    tpr_list = []
+    fpr_list = []
+    thresholds = []
+
+    tp = 0
+    fp = 0
+    last_score = np.inf
+
+    # 为了在最后加上 (0,0) 和 (1,1)
+    tpr_list.append(0.0)
+    fpr_list.append(0.0)
+    thresholds.append(np.inf)
+
+    for i in range(len(y_score_sorted)):
+        score = y_score_sorted[i]
+        label = y_true_sorted[i]
+
+        # 每遇到一个新的 score，就把当前点记下来
+        # （这里简单处理，也可以做 group-by）
+        if score != last_score:
+            tpr = tp / P
+            fpr = fp / N
+            tpr_list.append(tpr)
+            fpr_list.append(fpr)
+            thresholds.append(score)
+            last_score = score
+
+        if label == 1:
+            tp += 1
+        else:
+            fp += 1
+
+    # 最后再追加终点
+    tpr_list.append(1.0)
+    fpr_list.append(1.0)
+    thresholds.append(-np.inf)
+
+    fpr_arr = np.array(fpr_list)
+    tpr_arr = np.array(tpr_list)
+    thresholds = np.array(thresholds)
+
+    # AUC = 积分 \int TPR dFPR，用梯形规则计算
+    auc_value = np.trapz(tpr_arr, fpr_arr)
+
+    return fpr_arr, tpr_arr, thresholds, auc_value
 
 
 @torch.no_grad()
@@ -164,6 +245,104 @@ def main():
 
     print(f"[INFO] Collected attention for {labels_arr.shape[0]} events.")
     print(f"[INFO] had_feat_arr shape = {had_feat_arr.shape}, attn_arr shape = {attn_arr.shape}")
+
+    # ========= 4.5 计算 ROC & AUC 并画图 =========
+    # 约定：label=1 表示 B，是“正类”，
+    # y_score 取预测为 B 的概率 probs[:,1]
+    print("[INFO] Computing ROC curve and AUC for B vs D (B=positive class)...")
+    y_true = (labels_arr == 1).astype(np.int64)
+    y_score = probs_arr[:, 1]
+
+    fpr, tpr, thresholds, auc_value = compute_roc_auc(y_true, y_score)
+    print(f"[RESULT] AUC (B vs D) = {auc_value:.4f}")
+
+    # 画 ROC
+    roc_out = os.path.splitext(args.out)[0] + "_roc.png"
+    plt.figure(figsize=(5, 5))
+    plt.plot(fpr, tpr, label=f"ROC (AUC = {auc_value:.3f})")
+    plt.plot([0, 1], [0, 1], "k--", label="random")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("ROC curve (B vs D, positive=B)")
+    plt.legend(loc="lower right")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(roc_out, dpi=150)
+    plt.close()
+    print(f"[INFO] ROC curve saved to: {roc_out}")
+
+    # ========= 4.6 计算 D 和 B 各自的 efficiency × purity 曲线 =========
+    # 这里仍然用 y_score = prob(B)，但：
+    #   - 对 B 作为信号：选中条件 sel_B = (probB >= thr)
+    #   - 对 D 作为信号：选中条件 sel_D = (probB <= thr)
+    print("[INFO] Computing efficiency–purity curves for D and B...")
+
+    thresholds_ep = np.linspace(0.0, 1.0, 201)
+
+    eff_B_list, pur_B_list = [], []
+    eff_D_list, pur_D_list = [], []
+
+    for thr in thresholds_ep:
+        # ----- B 作为信号 -----
+        sel_B = (y_score >= thr)
+
+        TP_B = np.sum(sel_B & (y_true == 1))
+        FP_B = np.sum(sel_B & (y_true == 0))
+        FN_B = np.sum((~sel_B) & (y_true == 1))
+
+        if TP_B + FN_B > 0:
+            eff_B = TP_B / (TP_B + FN_B)
+        else:
+            eff_B = 0.0
+
+        if TP_B + FP_B > 0:
+            pur_B = TP_B / (TP_B + FP_B)
+        else:
+            pur_B = 1.0
+
+        eff_B_list.append(eff_B)
+        pur_B_list.append(pur_B)
+
+        # ----- D 作为信号 -----
+        sel_D = (y_score <= thr)
+
+        TP_D = np.sum(sel_D & (y_true == 0))
+        FP_D = np.sum(sel_D & (y_true == 1))
+        FN_D = np.sum((~sel_D) & (y_true == 0))
+
+        if TP_D + FN_D > 0:
+            eff_D = TP_D / (TP_D + FN_D)
+        else:
+            eff_D = 0.0
+
+        if TP_D + FP_D > 0:
+            pur_D = TP_D / (TP_D + FP_D)
+        else:
+            pur_D = 1.0
+
+        eff_D_list.append(eff_D)
+        pur_D_list.append(pur_D)
+
+    eff_B_arr = np.array(eff_B_list)
+    pur_B_arr = np.array(pur_B_list)
+    eff_D_arr = np.array(eff_D_list)
+    pur_D_arr = np.array(pur_D_list)
+
+    effpur_out = os.path.splitext(args.out)[0] + "_eff_purity.png"
+    plt.figure(figsize=(5, 5))
+    plt.plot(eff_B_arr, pur_B_arr, label="B as signal")
+    plt.plot(eff_D_arr, pur_D_arr, label="D as signal")
+    plt.xlabel("Efficiency")
+    plt.ylabel("Purity")
+    plt.title("Efficiency vs Purity (D/B)")
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.grid(True)
+    plt.legend(loc="lower left")
+    plt.tight_layout()
+    plt.savefig(effpur_out, dpi=150)
+    plt.close()
+    print(f"[INFO] Efficiency–purity curves saved to: {effpur_out}")
 
     # ========= 5. 保存为 npz =========
     out_dir = os.path.dirname(args.out)

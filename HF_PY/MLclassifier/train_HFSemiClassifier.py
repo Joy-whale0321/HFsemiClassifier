@@ -33,13 +33,13 @@ def parse_args():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=200,
+        default=400,
         help="训练轮数",
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=1e-4,
+        default=5e-5,
         help="学习率",
     )
     parser.add_argument(
@@ -142,9 +142,9 @@ def main():
     model = DeepSetsHF(
         had_input_dim=5,
         ele_input_dim=3,
-        had_hidden_dims=(128, 128, 128),
-        set_embed_dim=128,
-        clf_hidden_dims=(128, 128, 128),
+        had_hidden_dims=(256, 256, 256, 256),
+        set_embed_dim=256,
+        clf_hidden_dims=(256, 256, 256, 256),
         n_classes=2,
         use_ele_in_had_encoder=False,
         pooling="attn_mean",
@@ -160,7 +160,7 @@ def main():
 
     # ========== training and valid epoch loop ==========
     best_val_eff = 0.0 # for only saving the best model
-    start_save_epoch = int(args.epochs * 0.2)  # start doing something after the front epochs
+    start_save_epoch = int(args.epochs * 0.5)  # start doing something after the front epochs
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
