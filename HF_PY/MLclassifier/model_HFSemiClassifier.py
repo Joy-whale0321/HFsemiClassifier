@@ -1,13 +1,5 @@
 # model.py
-# Deep Sets 风格的 Heavy-Flavor 半轻衰变电子分类模型
-#
-# 输入:
-#   - ele_feat: (B, 3)  float32, 例如 [log(pt_e), eta_e, charge_e]
-#   - had_feat: (B, N, 5) float32, 例如 [log(pt_h), dEta, sin(dPhi), cos(dPhi), charge_h]
-#   - had_mask: (B, N)  bool, True=有效 hadron, False=padding
-#
-# 输出:
-#   - logits: (B, n_classes), 默认 n_classes=3 (D / B / other)
+# Deep Sets + (可选 Attention Pooling) 的 Heavy-Flavor 半轻衰变电子分类模型
 
 import torch
 import torch.nn as nn
@@ -38,15 +30,11 @@ class DeepSetsHF(nn.Module):
     """
     用 Deep Sets 处理 hadron 点云的 HF 电子分类模型.
 
-    每条样本 = 一条电子:
-      - 电子特征 ele_feat: (B, ele_dim)
-      - hadron 点云 had_feat: (B, N, had_dim)
-      - had_mask: (B, N) 表示哪些 hadron 有效
-
-    结构:
-      1. per-hadron encoder: φ(x_k) -> h_k
-      2. 对 {h_k} 做 masked mean pooling -> H_away
-      3. [ele_feat, H_away] 拼接 -> classifier MLP -> logits
+    pooling 选项:
+      - "mean"      : masked mean pooling (原来的做法)
+      - "sum"       : masked sum pooling
+      - "attn"      : 纯 attention pooling
+      - "attn_mean" : attention pooling 和 mean pooling 拼接后一起送入分类器
     """
 
     def __init__(
@@ -58,15 +46,16 @@ class DeepSetsHF(nn.Module):
         clf_hidden_dims=(64, 64),
         n_classes: int = 3,
         use_ele_in_had_encoder: bool = False,
-        pooling: str = "mean",  # "mean" or "sum"
+        pooling: str = "mean",      # "mean" / "sum" / "attn" / "attn_mean"
+        attn_hidden_dim: int = 64,  # attention 内部隐藏维度
     ):
         super().__init__()
 
         self.pooling = pooling
         self.use_ele_in_had_encoder = use_ele_in_had_encoder
+        self.set_embed_dim = set_embed_dim
 
         # 如果想在 encoding hadrons 时也把电子信息拼进去，可以打开这个 flag
-        # 例如: [had_feat, ele_feat] 作为 per-particle 输入
         if self.use_ele_in_had_encoder:
             per_had_input_dim = had_input_dim + ele_input_dim
         else:
@@ -81,8 +70,26 @@ class DeepSetsHF(nn.Module):
             last_activation=True,
         )
 
-        # classifier MLP (作用在 [ele_feat, H_away] 上)
-        clf_input_dim = ele_input_dim + set_embed_dim
+        # attention 打分网络（只在 pooling 为 attn/attn_mean 时会用到）
+        if self.pooling in ("attn", "attn_mean"):
+            self.attn_mlp = nn.Sequential(
+                nn.Linear(set_embed_dim, attn_hidden_dim),
+                nn.Tanh(),
+                nn.Linear(attn_hidden_dim, 1),  # -> score s_k
+            )
+        else:
+            self.attn_mlp = None
+
+        # 根据 pooling 类型确定 classifier 输入维度
+        if self.pooling == "attn_mean":
+            # 拼接 [H_attn, H_mean]，维度翻倍
+            set_feature_dim_for_clf = set_embed_dim * 2
+        else:
+            set_feature_dim_for_clf = set_embed_dim
+
+        clf_input_dim = ele_input_dim + set_feature_dim_for_clf
+
+        # classifier MLP (作用在 [ele_feat, H_away(可能是attn/mean/sum)] 上)
         self.classifier = build_mlp(
             input_dim=clf_input_dim,
             hidden_dims=list(clf_hidden_dims),
@@ -103,11 +110,7 @@ class DeepSetsHF(nn.Module):
         ----
         logits: (B, n_classes)
         """
-        # ele_feat: (B, ele_dim)
-        # had_feat: (B, N, had_dim)
-        # had_mask: (B, N)
-
-        B, N, Hdim = had_feat.shape
+        B, N, _ = had_feat.shape
 
         # ========== 构造 per-particle 输入 ==========
         if self.use_ele_in_had_encoder:
@@ -121,37 +124,46 @@ class DeepSetsHF(nn.Module):
         per_had_input_flat = per_had_input.view(B * N, -1)
 
         # 编码所有 hadron: φ(x_k)
-        had_encoded_flat = self.had_encoder(per_had_input_flat)  # (B*N, set_embed_dim)
-        had_encoded = had_encoded_flat.view(B, N, -1)            # (B, N, set_embed_dim)
+        had_encoded_flat = self.had_encoder(per_had_input_flat)          # (B*N, set_embed_dim)
+        had_encoded = had_encoded_flat.view(B, N, self.set_embed_dim)    # (B, N, set_embed_dim)
 
-        # ========== masked pooling over hadrons ==========
-        # 把 mask 转成 float: (B, N, 1)
-        mask = had_mask.unsqueeze(-1).float()  # True->1.0, False->0.0
+        # ========== mask ==========
+        mask = had_mask.unsqueeze(-1).float()      # (B, N, 1), True->1.0, False->0.0
+        had_encoded = had_encoded * mask           # padding 清零
 
-        # 把 padding 部分强制为 0
-        had_encoded = had_encoded * mask  # (B, N, set_embed_dim)
+        # ========== 基础 sum/mean pooling（有些模式要用到） ==========
+        had_sum = had_encoded.sum(dim=1)           # (B, set_embed_dim)
+        valid_counts = mask.sum(dim=1)             # (B, 1)
+        valid_counts = torch.clamp(valid_counts, min=1.0)
+        had_mean = had_sum / valid_counts          # (B, set_embed_dim)
 
-        # sum pooling
-        had_sum = had_encoded.sum(dim=1)  # (B, set_embed_dim)
+        # ========== attention pooling（可选） ==========
+        if self.pooling in ("attn", "attn_mean"):
+            # scores: (B, N, 1)
+            scores = self.attn_mlp(had_encoded)    # 对于 mask==0 的地方，反正 had_encoded=0，score 也会被屏蔽
+            # 将 padding 的位置的score设为很小，防止参与softmax
+            scores = scores.masked_fill(had_mask.unsqueeze(-1) == 0, -1e9)
+            # alpha: (B, N, 1)
+            alpha = F.softmax(scores, dim=1)
+            had_attn = torch.sum(alpha * had_encoded, dim=1)  # (B, set_embed_dim)
+        else:
+            had_attn = None
 
+        # ========== 根据 pooling 类型得到最终 had_embed ==========
         if self.pooling == "mean":
-            # 有效 hadron 数: (B, 1)
-            valid_counts = mask.sum(dim=1)  # (B, 1)
-            # 防止除 0
-            valid_counts = torch.clamp(valid_counts, min=1.0)
-            had_embed = had_sum / valid_counts  # (B, set_embed_dim)
+            had_embed = had_mean
         elif self.pooling == "sum":
             had_embed = had_sum
+        elif self.pooling == "attn":
+            had_embed = had_attn
+        elif self.pooling == "attn_mean":
+            # 拼接 attention 和 mean 的信息
+            had_embed = torch.cat([had_attn, had_mean], dim=-1)  # (B, 2*set_embed_dim)
         else:
             raise ValueError(f"Unknown pooling: {self.pooling}")
 
-        # 对于极端情况: 某个样本没有任何 hadron (全 False)
-        # 上面的 clamped 已经保证不会 NaN, 这时 had_embed=0
-
         # ========== 拼接电子特征 + 点云嵌入 ==========
-        # ele_feat: (B, ele_dim)
-        # had_embed: (B, set_embed_dim)
-        joint_feat = torch.cat([ele_feat, had_embed], dim=-1)  # (B, ele_dim + set_embed_dim)
+        joint_feat = torch.cat([ele_feat, had_embed], dim=-1)  # (B, ele_dim + set_feature_dim_for_clf)
 
         # ========== 分类器 ==========
         logits = self.classifier(joint_feat)  # (B, n_classes)
@@ -174,7 +186,7 @@ if __name__ == "__main__":
         clf_hidden_dims=(64, 64),
         n_classes=3,
         use_ele_in_had_encoder=False,
-        pooling="mean",
+        pooling="attn_mean",  # 可以改成 "mean" / "sum" / "attn"
     )
 
     logits = model(ele, had, mask)

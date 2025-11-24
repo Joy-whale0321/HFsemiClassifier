@@ -31,6 +31,7 @@ void AnaHFdata(
     std::vector<float>* ele_hf_TAG = nullptr;
     std::vector<float>* ele_nCh_away = nullptr;
 
+    std::vector<float>* had_pt = nullptr;
     std::vector<float>* had_phi = nullptr;
     std::vector<float>* had_eta = nullptr;
 
@@ -38,6 +39,7 @@ void AnaHFdata(
     PYtree->SetBranchAddress("ele_hf_TAG", &ele_hf_TAG);
     PYtree->SetBranchAddress("ele_nCh_away", &ele_nCh_away);
 
+    PYtree->SetBranchAddress("had_pt", &had_pt);
     PYtree->SetBranchAddress("had_phi", &had_phi);
     PYtree->SetBranchAddress("had_eta", &had_eta);
 
@@ -46,12 +48,15 @@ void AnaHFdata(
     TH1D* h1_D_multi = new TH1D("h1_D_multi", "", 100, 0, 100);
     TH1D* h1_B_multi = new TH1D("h1_B_multi", "", 100, 0, 100);
 
+    TH1D* h1_D_pt = new TH1D("h1_D_pt", "", 100, 0, 4);
+    TH1D* h1_B_pt = new TH1D("h1_B_pt", "", 100, 0, 4);
+
     int    nbinsX = 80;
     double xMin   = -4.0;
     double xMax   = 4.0;
 
     int    nbinsY = 60;
-    double yMin   = -3.0;
+    double yMin   = 0.0;
     double yMax   = 3.0;
 
     TH2D* h2 = new TH2D("h2", "TH2 from vector<float> branches;X;Y",
@@ -70,25 +75,44 @@ void AnaHFdata(
 
         // 防止长度不一样，取较小的长度
         size_t n = std::min(had_phi->size(), had_eta->size());
-
         for (size_t i = 0; i < n; ++i)
         {
             double x = had_phi->at(i);
-            double y = had_eta->at(i);
+            double y = std::abs(had_eta->at(i));
             h2->Fill(x, y);
         }
 
-        for(i=1; ele_hf_TAG->size(); ++i)
+        int size_e = ele_hf_TAG->size();
+        {
+            if (size_e > 1) cout<<"Event "<<ievt<<" has "<<size_e<<" electrons."<<endl;  
+            // continue;
+        }
+
+        for(int i=0; i<1; ++i)
         {
             int tag = ele_hf_TAG->at(i);
             int multi = ele_nCh_away->at(i);
+
             if (tag==1 && multi>0)
             {
                 h1_D_multi->Fill(multi);
+
+                int had_n = had_pt->size();
+                for(size_t j = 0; j < had_n; ++j)
+                {
+                    double had_pt_val = had_pt->at(j);
+                    h1_D_pt->Fill(had_pt_val);
+                }
             }
             else if(tag==2 && multi>0)
             {
                 h1_B_multi->Fill(multi);
+                int had_n = had_pt->size();
+                for(size_t j = 0; j < had_n; ++j)
+                {
+                    double had_pt_val = had_pt->at(j);
+                    h1_B_pt->Fill(had_pt_val);
+                }
             }
         }
 
@@ -99,6 +123,8 @@ void AnaHFdata(
     h2->Write();
     h1_D_multi->Write();
     h1_B_multi->Write();
+    h1_D_pt->Write();
+    h1_B_pt->Write();
     fout->Close();
 
     // 关闭输入文件

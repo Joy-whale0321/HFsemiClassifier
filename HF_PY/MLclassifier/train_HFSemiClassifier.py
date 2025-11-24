@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument(
         "--root-file",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_1.root",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_100M.root",
         help="Pythia 生成的 ROOT 文件路径",
     )
     parser.add_argument(
@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument(
         "--val-frac",
         type=float,
-        default=0.3,
+        default=0.25,
         help="验证集占比",
     )
     parser.add_argument(
