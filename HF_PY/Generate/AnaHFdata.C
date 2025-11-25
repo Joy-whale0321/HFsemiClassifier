@@ -30,6 +30,7 @@ void AnaHFdata(
     // 定义指针接 branch（都是 vector<float>）
     std::vector<float>* ele_hf_TAG = nullptr;
     std::vector<float>* ele_nCh_away = nullptr;
+    std::vector<float>* ele_pt = nullptr;
 
     std::vector<float>* had_pt = nullptr;
     std::vector<float>* had_phi = nullptr;
@@ -38,6 +39,7 @@ void AnaHFdata(
     // 关联 branch
     PYtree->SetBranchAddress("ele_hf_TAG", &ele_hf_TAG);
     PYtree->SetBranchAddress("ele_nCh_away", &ele_nCh_away);
+    PYtree->SetBranchAddress("ele_pt", &ele_pt);
 
     PYtree->SetBranchAddress("had_pt", &had_pt);
     PYtree->SetBranchAddress("had_phi", &had_phi);
@@ -50,6 +52,9 @@ void AnaHFdata(
 
     TH1D* h1_D_pt = new TH1D("h1_D_pt", "", 100, 0, 4);
     TH1D* h1_B_pt = new TH1D("h1_B_pt", "", 100, 0, 4);
+
+    TH1D* h1_De_pt = new TH1D("h1_De_pt", "", 100, 0, 10);
+    TH1D* h1_Be_pt = new TH1D("h1_Be_pt", "", 100, 0, 10);
 
     int    nbinsX = 80;
     double xMin   = -4.0;
@@ -92,10 +97,12 @@ void AnaHFdata(
         {
             int tag = ele_hf_TAG->at(i);
             int multi = ele_nCh_away->at(i);
+            double ele_pt_val = ele_pt->at(i);
 
             if (tag==1 && multi>0)
             {
                 h1_D_multi->Fill(multi);
+                h1_De_pt->Fill(ele_pt_val);
 
                 int had_n = had_pt->size();
                 for(size_t j = 0; j < had_n; ++j)
@@ -107,6 +114,8 @@ void AnaHFdata(
             else if(tag==2 && multi>0)
             {
                 h1_B_multi->Fill(multi);
+                h1_Be_pt->Fill(ele_pt_val);
+
                 int had_n = had_pt->size();
                 for(size_t j = 0; j < had_n; ++j)
                 {
@@ -125,6 +134,8 @@ void AnaHFdata(
     h1_B_multi->Write();
     h1_D_pt->Write();
     h1_B_pt->Write();
+    h1_De_pt->Write();
+    h1_Be_pt->Write();
     fout->Close();
 
     // 关闭输入文件

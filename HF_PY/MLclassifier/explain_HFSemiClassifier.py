@@ -4,6 +4,8 @@
 # 读取训练好的 DeepSetsHF 模型，导出每个 event 的 attention 权重，
 # 并简单打印前几个 event 的“最重要 hadron”，
 # 另外根据验证集的输出画 ROC 曲线并计算 AUC。
+# 现在增加：按 electron pT 分 4 个区间 (3–4, 4–6, 6–8, ≥8 GeV)
+# 分别画 ROC 和 eff–purity。
 
 import os
 import argparse
@@ -11,7 +13,7 @@ import argparse
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt   # 新增：用于画 ROC 曲线
+import matplotlib.pyplot as plt   # 用于画 ROC / eff–purity 曲线
 
 from data_HFSemiClassifier import HFSemiClassifier, hf_semi_collate
 from model_HFSemiClassifier import DeepSetsHF
@@ -118,7 +120,6 @@ def compute_roc_auc(y_true, y_score):
         label = y_true_sorted[i]
 
         # 每遇到一个新的 score，就把当前点记下来
-        # （这里简单处理，也可以做 group-by）
         if score != last_score:
             tpr = tp / P
             fpr = fp / N
@@ -185,9 +186,9 @@ def main():
     model = DeepSetsHF(
         had_input_dim=5,
         ele_input_dim=3,
-        had_hidden_dims=(128, 128, 128),
-        set_embed_dim=128,
-        clf_hidden_dims=(128, 128, 128),
+        had_hidden_dims=(256, 256, 256, 256),
+        set_embed_dim=256,
+        clf_hidden_dims=(256, 256, 256, 256),
         n_classes=2,
         use_ele_in_had_encoder=False,
         pooling="attn_mean",  # 和你训练时保持一致
@@ -246,36 +247,35 @@ def main():
     print(f"[INFO] Collected attention for {labels_arr.shape[0]} events.")
     print(f"[INFO] had_feat_arr shape = {had_feat_arr.shape}, attn_arr shape = {attn_arr.shape}")
 
-    # ========= 4.5 计算 ROC & AUC 并画图 =========
-    # 约定：label=1 表示 B，是“正类”，
-    # y_score 取预测为 B 的概率 probs[:,1]
-    print("[INFO] Computing ROC curve and AUC for B vs D (B=positive class)...")
+    # ========= 4.5 计算 ROC & AUC（全体 e）并画图 =========
+    # 约定：label=1 表示 B，是“正类”
+    print("[INFO] Computing ROC curve and AUC for ALL electrons (B vs D, B=positive)...")
     y_true = (labels_arr == 1).astype(np.int64)
+    # probs_arr[:,1] 是预测为 B 的概率
     y_score = probs_arr[:, 1]
 
     fpr, tpr, thresholds, auc_value = compute_roc_auc(y_true, y_score)
-    print(f"[RESULT] AUC (B vs D) = {auc_value:.4f}")
+    print(f"[RESULT] AUC_all (B vs D) = {auc_value:.4f}")
 
-    # 画 ROC
-    roc_out = os.path.splitext(args.out)[0] + "_roc.png"
+    base_prefix = os.path.splitext(args.out)[0]
+
+    # 全体 ROC
+    roc_out = base_prefix + "_roc_all.png"
     plt.figure(figsize=(5, 5))
-    plt.plot(fpr, tpr, label=f"ROC (AUC = {auc_value:.3f})")
+    plt.plot(fpr, tpr, label=f"ALL (AUC = {auc_value:.3f})")
     plt.plot([0, 1], [0, 1], "k--", label="random")
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
-    plt.title("ROC curve (B vs D, positive=B)")
+    plt.title("ROC curve (B vs D, positive=B, ALL e)")
     plt.legend(loc="lower right")
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(roc_out, dpi=150)
     plt.close()
-    print(f"[INFO] ROC curve saved to: {roc_out}")
+    print(f"[INFO] ROC curve (ALL) saved to: {roc_out}")
 
-    # ========= 4.6 计算 D 和 B 各自的 efficiency × purity 曲线 =========
-    # 这里仍然用 y_score = prob(B)，但：
-    #   - 对 B 作为信号：选中条件 sel_B = (probB >= thr)
-    #   - 对 D 作为信号：选中条件 sel_D = (probB <= thr)
-    print("[INFO] Computing efficiency–purity curves for D and B...")
+    # ========= 4.6 计算 D 和 B 各自的 efficiency × purity 曲线（全体 e） =========
+    print("[INFO] Computing efficiency–purity curves for D and B (ALL e)...")
 
     thresholds_ep = np.linspace(0.0, 1.0, 201)
 
@@ -323,26 +323,188 @@ def main():
         eff_D_list.append(eff_D)
         pur_D_list.append(pur_D)
 
-    eff_B_arr = np.array(eff_B_list)
-    pur_B_arr = np.array(pur_B_list)
-    eff_D_arr = np.array(eff_D_list)
-    pur_D_arr = np.array(pur_D_list)
+    eff_B_arr_all = np.array(eff_B_list)
+    pur_B_arr_all = np.array(pur_B_list)
+    eff_D_arr_all = np.array(eff_D_list)
+    pur_D_arr_all = np.array(pur_D_list)
 
-    effpur_out = os.path.splitext(args.out)[0] + "_eff_purity.png"
+    effpur_out_all = base_prefix + "_eff_purity_all.png"
     plt.figure(figsize=(5, 5))
-    plt.plot(eff_B_arr, pur_B_arr, label="B as signal")
-    plt.plot(eff_D_arr, pur_D_arr, label="D as signal")
+    plt.plot(eff_B_arr_all, pur_B_arr_all, label="B as signal (ALL)")
+    plt.plot(eff_D_arr_all, pur_D_arr_all, label="D as signal (ALL)")
     plt.xlabel("Efficiency")
     plt.ylabel("Purity")
-    plt.title("Efficiency vs Purity (D/B)")
+    plt.title("Efficiency vs Purity (D/B, ALL e)")
     plt.xlim(0, 1)
     plt.ylim(0, 1)
     plt.grid(True)
     plt.legend(loc="lower left")
     plt.tight_layout()
-    plt.savefig(effpur_out, dpi=150)
+    plt.savefig(effpur_out_all, dpi=150)
     plt.close()
-    print(f"[INFO] Efficiency–purity curves saved to: {effpur_out}")
+    print(f"[INFO] Efficiency–purity curves (ALL) saved to: {effpur_out_all}")
+
+    # ========= 4.7 按 electron pT 分区间画 ROC & eff–purity =========
+    # ele_feat_arr[:,0] = log(pt_e)，这里用 np.exp 还原 GeV
+    pt_e = np.exp(ele_feat_arr[:, 0])
+
+    # 4 个区间: [3,4), [4,6), [6,8), [8, +inf)
+    pt_bins = [
+        (3.0, 4.0),
+        (4.0, 6.0),
+        (6.0, 8.0),
+        (8.0, np.inf),
+    ]
+
+    # ----- (1) 各 pt 区间 ROC 放在一张图上 -----
+    roc_pt_out = base_prefix + "_roc_ptbins.png"
+    plt.figure(figsize=(5, 5))
+
+    for (low, high) in pt_bins:
+        if np.isinf(high):
+            mask_bin = (pt_e >= low)
+            bin_name = f">= {low:.0f} GeV"
+        else:
+            mask_bin = (pt_e >= low) & (pt_e < high)
+            bin_name = f"{low:.0f}–{high:.0f} GeV"
+
+        n_bin = np.sum(mask_bin)
+        if n_bin < 10:
+            print(f"[WARN] pT bin {bin_name} has only {n_bin} events, skip ROC.")
+            continue
+
+        y_true_bin = y_true[mask_bin]
+        y_score_bin = y_score[mask_bin]
+
+        fpr_b, tpr_b, thr_b, auc_b = compute_roc_auc(y_true_bin, y_score_bin)
+        print(f"[RESULT] AUC (B vs D) in pT bin {bin_name}: {auc_b:.4f}")
+
+        plt.plot(fpr_b, tpr_b, label=f"{bin_name} (AUC={auc_b:.3f})")
+
+    plt.plot([0, 1], [0, 1], "k--", label="random")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("ROC curves in different e pT bins (B vs D, B=positive)")
+    plt.legend(loc="lower right", fontsize=8)
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(roc_pt_out, dpi=150)
+    plt.close()
+    print(f"[INFO] ROC curves (pT bins) saved to: {roc_pt_out}")
+
+    # ----- (2) 各 pt 区间的 eff–purity：B / D 各画一张 -----
+    effpur_B_pt_out = base_prefix + "_eff_purity_B_ptbins.png"
+    effpur_D_pt_out = base_prefix + "_eff_purity_D_ptbins.png"
+
+    # B as signal
+    plt.figure(figsize=(5, 5))
+    for (low, high) in pt_bins:
+        if np.isinf(high):
+            mask_bin = (pt_e >= low)
+            bin_name = f">= {low:.0f} GeV"
+        else:
+            mask_bin = (pt_e >= low) & (pt_e < high)
+            bin_name = f"{low:.0f}–{high:.0f} GeV"
+
+        n_bin = np.sum(mask_bin)
+        if n_bin < 10:
+            print(f"[WARN] pT bin {bin_name} has only {n_bin} events, skip eff–pur (B).")
+            continue
+
+        y_true_bin = y_true[mask_bin]
+        y_score_bin = y_score[mask_bin]
+
+        eff_B_list, pur_B_list = [], []
+        for thr in thresholds_ep:
+            sel_B = (y_score_bin >= thr)
+
+            TP_B = np.sum(sel_B & (y_true_bin == 1))
+            FP_B = np.sum(sel_B & (y_true_bin == 0))
+            FN_B = np.sum((~sel_B) & (y_true_bin == 1))
+
+            if TP_B + FN_B > 0:
+                eff_B = TP_B / (TP_B + FN_B)
+            else:
+                eff_B = 0.0
+
+            if TP_B + FP_B > 0:
+                pur_B = TP_B / (TP_B + FP_B)
+            else:
+                pur_B = 1.0
+
+            eff_B_list.append(eff_B)
+            pur_B_list.append(pur_B)
+
+        eff_B_arr = np.array(eff_B_list)
+        pur_B_arr = np.array(pur_B_list)
+        plt.plot(eff_B_arr, pur_B_arr, label=bin_name)
+
+    plt.xlabel("Efficiency (B as signal)")
+    plt.ylabel("Purity (B sample)")
+    plt.title("B efficiency vs purity in different e pT bins")
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.grid(True)
+    plt.legend(loc="lower left", fontsize=8)
+    plt.tight_layout()
+    plt.savefig(effpur_B_pt_out, dpi=150)
+    plt.close()
+    print(f"[INFO] B efficiency–purity (pT bins) saved to: {effpur_B_pt_out}")
+
+    # D as signal
+    plt.figure(figsize=(5, 5))
+    for (low, high) in pt_bins:
+        if np.isinf(high):
+            mask_bin = (pt_e >= low)
+            bin_name = f">= {low:.0f} GeV"
+        else:
+            mask_bin = (pt_e >= low) & (pt_e < high)
+            bin_name = f"{low:.0f}–{high:.0f} GeV"
+
+        n_bin = np.sum(mask_bin)
+        if n_bin < 10:
+            print(f"[WARN] pT bin {bin_name} has only {n_bin} events, skip eff–pur (D).")
+            continue
+
+        y_true_bin = y_true[mask_bin]
+        y_score_bin = y_score[mask_bin]
+
+        eff_D_list, pur_D_list = [], []
+        for thr in thresholds_ep:
+            sel_D = (y_score_bin <= thr)
+
+            TP_D = np.sum(sel_D & (y_true_bin == 0))
+            FP_D = np.sum(sel_D & (y_true_bin == 1))
+            FN_D = np.sum((~sel_D) & (y_true_bin == 0))
+
+            if TP_D + FN_D > 0:
+                eff_D = TP_D / (TP_D + FN_D)
+            else:
+                eff_D = 0.0
+
+            if TP_D + FP_D > 0:
+                pur_D = TP_D / (TP_D + FP_D)
+            else:
+                pur_D = 1.0
+
+            eff_D_list.append(eff_D)
+            pur_D_list.append(pur_D)
+
+        eff_D_arr = np.array(eff_D_list)
+        pur_D_arr = np.array(pur_D_list)
+        plt.plot(eff_D_arr, pur_D_arr, label=bin_name)
+
+    plt.xlabel("Efficiency (D as signal)")
+    plt.ylabel("Purity (D sample)")
+    plt.title("D efficiency vs purity in different e pT bins")
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.grid(True)
+    plt.legend(loc="lower left", fontsize=8)
+    plt.tight_layout()
+    plt.savefig(effpur_D_pt_out, dpi=150)
+    plt.close()
+    print(f"[INFO] D efficiency–purity (pT bins) saved to: {effpur_D_pt_out}")
 
     # ========= 5. 保存为 npz =========
     out_dir = os.path.dirname(args.out)

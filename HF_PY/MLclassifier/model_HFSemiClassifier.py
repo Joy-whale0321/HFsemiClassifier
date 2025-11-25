@@ -1,5 +1,7 @@
-# model.py
+# model_HFSemiClassifier.py
 # Deep Sets + (可选 Attention Pooling) 的 Heavy-Flavor 半轻衰变电子分类模型
+# 这版增加 use_ele_feat 开关，可以选择是否在 classifier 中使用 electron 的特征。
+# 当 use_ele_feat=False 时，模型完全忽略 ele_feat，只基于 hadron 点云做分类。
 
 import torch
 import torch.nn as nn
@@ -13,55 +15,57 @@ def build_mlp(input_dim, hidden_dims, output_dim, activation=nn.ReLU, last_activ
     """
     layers = []
     prev_dim = input_dim
-
     for h in hidden_dims:
         layers.append(nn.Linear(prev_dim, h))
         layers.append(activation())
         prev_dim = h
-
     layers.append(nn.Linear(prev_dim, output_dim))
     if last_activation:
         layers.append(activation())
-
     return nn.Sequential(*layers)
 
 
 class DeepSetsHF(nn.Module):
     """
-    用 Deep Sets 处理 hadron 点云的 HF 电子分类模型.
+    使用 Deep Sets 架构的 Heavy-Flavor 半轻衰变电子分类模型。
 
-    pooling 选项:
-      - "mean"      : masked mean pooling (原来的做法)
-      - "sum"       : masked sum pooling
-      - "attn"      : 纯 attention pooling
-      - "attn_mean" : attention pooling 和 mean pooling 拼接后一起送入分类器
+    输入:
+      - had_feat: (B, N, had_input_dim)
+      - had_mask: (B, N)  bool / 0-1, True=有效 hadron, False=padding
+      - ele_feat: (B, ele_input_dim)，如果 use_ele_feat=False，这个输入会被忽略
+
+    主要步骤:
+      1) per-hadron encoder: phi(h_k) -> R^{set_embed_dim}
+      2) pooling over hadrons (mean/sum/attn/attn_mean) 得到整团 hadron 的表征 H
+      3) 如果 use_ele_feat=True: 拼接 [ele_feat, H] 再喂给 classifier
+         如果 use_ele_feat=False: 只用 H 喂给 classifier
     """
 
     def __init__(
         self,
-        had_input_dim: int = 5,
-        ele_input_dim: int = 3,
-        had_hidden_dims=(64, 64),
-        set_embed_dim: int = 64,
-        clf_hidden_dims=(64, 64),
-        n_classes: int = 3,
+        had_input_dim: int,
+        ele_input_dim: int,
+        had_hidden_dims=(256, 256, 256, 256),
+        set_embed_dim: int = 256,
+        clf_hidden_dims=(256, 256, 256, 256),
+        n_classes: int = 2,
         use_ele_in_had_encoder: bool = False,
-        pooling: str = "mean",      # "mean" / "sum" / "attn" / "attn_mean"
-        attn_hidden_dim: int = 64,  # attention 内部隐藏维度
+        pooling: str = "attn_mean",
+        attn_hidden_dim: int = 64,
+        use_ele_feat: bool = True,
     ):
         super().__init__()
 
+        self.had_input_dim = had_input_dim
+        self.ele_input_dim = ele_input_dim
+        self.set_embed_dim = set_embed_dim
         self.pooling = pooling
         self.use_ele_in_had_encoder = use_ele_in_had_encoder
-        self.set_embed_dim = set_embed_dim
+        self.use_ele_feat = use_ele_feat
 
-        # 如果想在 encoding hadrons 时也把电子信息拼进去，可以打开这个 flag
-        if self.use_ele_in_had_encoder:
-            per_had_input_dim = had_input_dim + ele_input_dim
-        else:
-            per_had_input_dim = had_input_dim
-
-        # per-particle encoder φ
+        # ========== per-hadron encoder ==========
+        # 如果 use_ele_in_had_encoder=True，则每个 hadron 同时看到 ele_feat
+        per_had_input_dim = had_input_dim + (ele_input_dim if use_ele_in_had_encoder else 0)
         self.had_encoder = build_mlp(
             input_dim=per_had_input_dim,
             hidden_dims=list(had_hidden_dims),
@@ -70,7 +74,7 @@ class DeepSetsHF(nn.Module):
             last_activation=True,
         )
 
-        # attention 打分网络（只在 pooling 为 attn/attn_mean 时会用到）
+        # ========== attention MLP (可选) ==========
         if self.pooling in ("attn", "attn_mean"):
             self.attn_mlp = nn.Sequential(
                 nn.Linear(set_embed_dim, attn_hidden_dim),
@@ -80,16 +84,16 @@ class DeepSetsHF(nn.Module):
         else:
             self.attn_mlp = None
 
-        # 根据 pooling 类型确定 classifier 输入维度
+        # ========== classifier 输入维度 ==========
         if self.pooling == "attn_mean":
             # 拼接 [H_attn, H_mean]，维度翻倍
             set_feature_dim_for_clf = set_embed_dim * 2
         else:
             set_feature_dim_for_clf = set_embed_dim
 
-        clf_input_dim = ele_input_dim + set_feature_dim_for_clf
+        # 根据 use_ele_feat 决定是否在 classifier 中使用 ele_feat
+        clf_input_dim = (ele_input_dim if self.use_ele_feat else 0) + set_feature_dim_for_clf
 
-        # classifier MLP (作用在 [ele_feat, H_away(可能是attn/mean/sum)] 上)
         self.classifier = build_mlp(
             input_dim=clf_input_dim,
             hidden_dims=list(clf_hidden_dims),
@@ -100,55 +104,55 @@ class DeepSetsHF(nn.Module):
 
     def forward(self, ele_feat, had_feat, had_mask, return_attn: bool = False):
         """
-        参数
-        ----
-        ele_feat: (B, ele_dim)
-        had_feat: (B, N, had_dim)
-        had_mask: (B, N) bool
-        return_attn: 若为 True，则额外返回 attention 权重 alpha，shape = (B, N)
+        参数:
+          ele_feat: (B, ele_input_dim)，如果 use_ele_feat=False，仅用于与 had_feat 拼接
+                    (当 use_ele_in_had_encoder=True 时)
+          had_feat: (B, N, had_input_dim)
+          had_mask: (B, N) bool / 0/1，True=有效 hadron
 
-        返回
-        ----
-        - 若 return_attn=False: logits: (B, n_classes)
-        - 若 return_attn=True : (logits, alpha)，其中 alpha 为 (B, N) 或 None（非 attn pooling 时）
+        返回:
+          logits: (B, n_classes)
+          如果 return_attn=True，并且使用了 attention pooling，则返回 (logits, alpha)
+          其中 alpha: (B, N) 是每个 hadron 的注意力权重；否则 alpha=None
         """
         B, N, _ = had_feat.shape
 
-        # ========== 构造 per-particle 输入 ==========
+        # ========== per-hadron encoding ==========
         if self.use_ele_in_had_encoder:
-            # 把 ele_feat broadcast 到每个 hadron 上: (B, 1, ele_dim) -> (B, N, ele_dim)
+            # 将 ele_feat broadcast 到每个 hadron: (B, 1, ele_dim) -> (B, N, ele_dim)
             ele_expanded = ele_feat.unsqueeze(1).expand(-1, N, -1)
-            per_had_input = torch.cat([had_feat, ele_expanded], dim=-1)  # (B, N, had_dim + ele_dim)
+            had_input = torch.cat([had_feat, ele_expanded], dim=-1)  # (B, N, had_input+ele_input)
         else:
-            per_had_input = had_feat  # (B, N, had_dim)
+            had_input = had_feat
 
-        # 展平 batch + N, 方便过 MLP: (B*N, input_dim)
-        per_had_input_flat = per_had_input.view(B * N, -1)
+        # reshape 成 (B*N, input_dim) 送入 MLP
+        had_input_flat = had_input.view(B * N, -1)
+        had_encoded_flat = self.had_encoder(had_input_flat)  # (B*N, set_embed_dim)
+        had_encoded = had_encoded_flat.view(B, N, self.set_embed_dim)
 
-        # 编码所有 hadron: φ(x_k)
-        had_encoded_flat = self.had_encoder(per_had_input_flat)          # (B*N, set_embed_dim)
-        had_encoded = had_encoded_flat.view(B, N, self.set_embed_dim)    # (B, N, set_embed_dim)
+        # mask: (B, N) -> (B, N, 1)
+        if had_mask.dtype != torch.bool:
+            had_mask_bool = had_mask > 0
+        else:
+            had_mask_bool = had_mask
+        mask = had_mask_bool.unsqueeze(-1)  # (B, N, 1)
 
-        # ========== mask ==========
-        mask = had_mask.unsqueeze(-1).float()      # (B, N, 1), True->1.0, False->0.0
-        had_encoded = had_encoded * mask           # padding 清零
+        # 将 padding 位置置零
+        had_encoded = had_encoded * mask  # (B, N, set_embed_dim)
 
-        # ========== 基础 sum/mean pooling（有些模式要用到） ==========
-        had_sum = had_encoded.sum(dim=1)           # (B, set_embed_dim)
-        valid_counts = mask.sum(dim=1)             # (B, 1)
-        valid_counts = torch.clamp(valid_counts, min=1.0)
-        had_mean = had_sum / valid_counts          # (B, set_embed_dim)
+        # ========== mean / sum pooling ==========
+        # 统计每个 batch 内有效 hadron 数
+        valid_counts = mask.sum(dim=1).clamp(min=1.0)  # (B, 1)
+        had_sum = had_encoded.sum(dim=1)                      # (B, set_embed_dim)
+        had_mean = had_sum / valid_counts                     # (B, set_embed_dim)
 
-        alpha = None  # 默认没有 attention
-
-        # ========== attention pooling（可选） ==========
-        if self.pooling in ("attn", "attn_mean"):
+        # ========== attention pooling（如果需要）==========
+        alpha = None
+        if self.attn_mlp is not None:
             # scores: (B, N, 1)
-            scores = self.attn_mlp(had_encoded)    # 对于 mask==0 的地方，反正 had_encoded=0
-            # 将 padding 的位置的score设为很小，防止参与softmax
-            scores = scores.masked_fill(had_mask.unsqueeze(-1) == 0, -1e9)
-            # alpha: (B, N, 1)
-            alpha = F.softmax(scores, dim=1)
+            scores = self.attn_mlp(had_encoded)               # padding 的位置目前是 0
+            scores = scores.masked_fill(~had_mask_bool.unsqueeze(-1), -1e9)
+            alpha = F.softmax(scores, dim=1)                  # (B, N, 1)
             had_attn = torch.sum(alpha * had_encoded, dim=1)  # (B, set_embed_dim)
         else:
             had_attn = None
@@ -161,31 +165,31 @@ class DeepSetsHF(nn.Module):
         elif self.pooling == "attn":
             had_embed = had_attn
         elif self.pooling == "attn_mean":
-            # 拼接 attention 和 mean 的信息
-            had_embed = torch.cat([had_attn, had_mean], dim=-1)  # (B, 2*set_embed_dim)
+            had_embed = torch.cat([had_attn, had_mean], dim=-1)
         else:
             raise ValueError(f"Unknown pooling: {self.pooling}")
 
-        # ========== 拼接电子特征 + 点云嵌入 ==========
-        joint_feat = torch.cat([ele_feat, had_embed], dim=-1)  # (B, ele_dim + set_feature_dim_for_clf)
+        # ========== 构造 classifier 输入 ==========
+        if self.use_ele_feat:
+            joint_feat = torch.cat([ele_feat, had_embed], dim=-1)
+        else:
+            joint_feat = had_embed
 
         # ========== 分类器 ==========
-        logits = self.classifier(joint_feat)  # (B, n_classes)
+        logits = self.classifier(joint_feat)
 
-        # ========== 按需返回 attention ==========
         if return_attn:
             if alpha is not None:
-                # alpha: (B, N, 1) -> (B, N)
-                alpha_out = alpha.squeeze(-1)
+                alpha_out = alpha.squeeze(-1)  # (B, N)
             else:
                 alpha_out = None
             return logits, alpha_out
-
-        return logits
+        else:
+            return logits
 
 
 if __name__ == "__main__":
-    # 简单自测一下 shape 是否匹配
+    # 简单自测
     B, N = 4, 10
     ele = torch.randn(B, 3)
     had = torch.randn(B, N, 5)
@@ -197,11 +201,12 @@ if __name__ == "__main__":
         had_hidden_dims=(64, 64),
         set_embed_dim=64,
         clf_hidden_dims=(64, 64),
-        n_classes=3,
+        n_classes=2,
         use_ele_in_had_encoder=False,
-        pooling="attn_mean",  # 可以改成 "mean" / "sum" / "attn"
+        pooling="attn_mean",
+        use_ele_feat=False,  # 测试“只用 hadron 信息”的情况
     )
 
     logits, alpha = model(ele, had, mask, return_attn=True)
-    print("logits shape:", logits.shape)  # 预期: (B, 3)
-    print("alpha shape:", None if alpha is None else alpha.shape)  # (B, N) for attn/attn_mean
+    print("logits shape:", logits.shape)
+    print("alpha shape:", None if alpha is None else alpha.shape)

@@ -1,7 +1,7 @@
 # data.py
 # Dataset for HF semi-leptonic electron classification using point-cloud of hadrons
 #
-# 使用前提：有一个由 ppHF_eXDecay.cc 生成的 ROOT 文件：
+# prepare：有一个由 ppHF_eXDecay.cc 生成的 ROOT 文件：
 #   - 文件内有 TTree "tree"
 #   - 分支包含：
 #       nEle, ele_charge, ele_E, ele_pt, ele_eta, ele_phi, ele_hf_TAG, ele_is_semileptonic
@@ -12,8 +12,6 @@
 #   - had_feat: N_had × 5 矩阵，列为 [log(pt_h), dEta, sin(dPhi), cos(dPhi), charge_h]
 #   - label: 0 (D), 1 (B), 2 (other)
 #
-# 注意：当前 ROOT 只保存了 "away-side" hadrons，本 Dataset 就用这些作为点云。
-# 如果你以后在 ntuple 里加入 full-event hadrons 分支，逻辑可以类似扩展。
 
 import numpy as np
 import uproot
@@ -38,14 +36,29 @@ class HFSemiClassifier(Dataset):
         TTree 名字，默认 "tree"
     use_log_pt : bool
         是否对 pt 取 log。推荐 True。
+    pt_min, pt_max : float or None
+        只选择满足 pt_min <= pt_e < pt_max 的电子。
+        若为 None 则不在这一侧做 cut。
+        例如:
+          pt_min=3.0, pt_max=4.0  -> 3–4 GeV 这个 bin
+          pt_min=8.0, pt_max=None -> >= 8 GeV
     """
 
-    def __init__(self, root_file: str, tree_name: str = "tree", use_log_pt: bool = True):
+    def __init__(
+        self,
+        root_file: str,
+        tree_name: str = "tree",
+        use_log_pt: bool = True,
+        pt_min: float | None = None,
+        pt_max: float | None = None,
+    ):
         super().__init__()
 
         self.root_file = root_file
         self.tree_name = tree_name
         self.use_log_pt = use_log_pt
+        self.pt_min = pt_min
+        self.pt_max = pt_max
 
         # 打开 ROOT 文件并读取需要的分支
         file = uproot.open(self.root_file)
@@ -89,6 +102,9 @@ class HFSemiClassifier(Dataset):
     def _build_index(self):
         """
         遍历所有 event，为每条电子建立一个全局 index。
+        同时在这里做：
+          - 只保留 D/B (ele_hf_TAG=1/2)
+          - 可选的 pt bin 选择 (pt_min, pt_max)
         """
         self.electron_index = []  # list of (evt_idx, ele_idx)
 
@@ -96,19 +112,27 @@ class HFSemiClassifier(Dataset):
         for evt in range(n_events):
             n_ele_evt = int(self.nEle[evt])
             for i_ele in range(n_ele_evt):
-                # 如果你想额外加 cut（比如 pt>某值），可以在这里判断
-                # self.electron_index.append((evt, i_ele))
-               
-                # 只保留 D(1) 和 B(2)，跳过 other(0)
-                # 在这里读 raw_tag
+                # ----- 1) 先看是不是 D/B -----
                 raw_tag = int(self.ele_hf_TAG[evt][i_ele])
-                if raw_tag == 1 or raw_tag == 2:
-                    self.electron_index.append((evt, i_ele))
-                else:
-                    # raw_tag == 0: other
+                if raw_tag not in (1, 2):
+                    # raw_tag == 0: other，直接丢弃
                     continue
 
+                # ----- 2) 再看 pt bin cut -----
+                pt_e = float(self.ele_pt[evt][i_ele])
+                if self.pt_min is not None and pt_e < self.pt_min:
+                    continue
+                if self.pt_max is not None and pt_e >= self.pt_max:
+                    continue
+
+                # 通过所有 cut，就保留
+                self.electron_index.append((evt, i_ele))
+
         self._length = len(self.electron_index)
+        print(
+            f"[HFSemiClassifier] built index with {self._length} electrons "
+            f"(pt_min={self.pt_min}, pt_max={self.pt_max})"
+        )
 
     def __len__(self):
         return self._length
@@ -142,7 +166,6 @@ class HFSemiClassifier(Dataset):
         )
 
         # ---------- hadron 点云特征 ----------
-        # 当前 ntuple 中 only has away-side hadrons via had_fromEle
         had_fromEle_evt = self.had_fromEle[evt_idx]
         had_mask = (had_fromEle_evt == ele_idx)
 
@@ -171,7 +194,6 @@ class HFSemiClassifier(Dataset):
             had_feat = np.zeros((0, 5), dtype=np.float32)
 
         # ---------- label ----------
-        # ele_hf_TAG: 1(D), 2(B), 0(other) in your generation code
         raw_tag = int(self.ele_hf_TAG[evt_idx][ele_idx])
         if raw_tag == 1:
             label = 0  # class 0: D
