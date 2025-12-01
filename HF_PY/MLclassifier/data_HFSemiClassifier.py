@@ -1,18 +1,3 @@
-# data.py
-# Dataset for HF semi-leptonic electron classification using point-cloud of hadrons
-#
-# prepare：有一个由 ppHF_eXDecay.cc 生成的 ROOT 文件：
-#   - 文件内有 TTree "tree"
-#   - 分支包含：
-#       nEle, ele_charge, ele_E, ele_pt, ele_eta, ele_phi, ele_hf_TAG, ele_is_semileptonic
-#       nHad_away, had_fromEle, had_charge, had_pt, had_eta, had_phi
-#
-# 每个样本 = 一条电子：
-#   - ele_feat: [log(pt_e), eta_e, charge_e]
-#   - had_feat: N_had × 5 矩阵，列为 [log(pt_h), dEta, sin(dPhi), cos(dPhi), charge_h]
-#   - label: 0 (D), 1 (B), 2 (other)
-#
-
 import numpy as np
 import uproot
 import awkward as ak
@@ -42,6 +27,21 @@ class HFSemiClassifier(Dataset):
         例如:
           pt_min=3.0, pt_max=4.0  -> 3–4 GeV 这个 bin
           pt_min=8.0, pt_max=None -> >= 8 GeV
+    eta_abs_max : float or None
+        |eta_e| 的最大值。若不为 None，则只保留 |eta_e| <= eta_abs_max 的电子，
+        且只保留满足 |eta_h| = |eta_e + dEta| <= eta_abs_max 的 hadrons。
+        例如：eta_abs_max = 1.0 -> 只用 |eta| <= 1 的区域。
+    use_had_eta : bool
+        是否在 hadron 特征里使用 Δη 信息。
+        若为 False，则第二列 Δη 统一置 0，相当于屏蔽 hadron η。
+    dphi_windows : list[tuple[float, float]] or None
+        对 hadron 做 Δφ 选择。只保留 Δφ 落在这些区间内的 hadrons。
+        Δφ 为生成 ntuple 时定义的 had_phi 分支（已经是 Δφ，通常在 [-pi, pi]）。
+
+        例如:
+          dphi_windows = [(-np.pi/2, np.pi/2)]
+          dphi_windows = [(-np.pi/3, np.pi/3), (2.0, 3.0)]
+        若为 None，则不对 Δφ 做 cut。
     """
 
     def __init__(
@@ -51,6 +51,9 @@ class HFSemiClassifier(Dataset):
         use_log_pt: bool = True,
         pt_min: float | None = None,
         pt_max: float | None = None,
+        eta_abs_max: float | None = 1.0,
+        use_had_eta: bool = True,
+        dphi_windows: list[tuple[float, float]] | None = None,  # <<< 新增
     ):
         super().__init__()
 
@@ -59,6 +62,9 @@ class HFSemiClassifier(Dataset):
         self.use_log_pt = use_log_pt
         self.pt_min = pt_min
         self.pt_max = pt_max
+        self.eta_abs_max = eta_abs_max
+        self.use_had_eta = use_had_eta
+        self.dphi_windows = dphi_windows  # <<< 新增
 
         # 打开 ROOT 文件并读取需要的分支
         file = uproot.open(self.root_file)
@@ -104,7 +110,8 @@ class HFSemiClassifier(Dataset):
         遍历所有 event，为每条电子建立一个全局 index。
         同时在这里做：
           - 只保留 D/B (ele_hf_TAG=1/2)
-          - 可选的 pt bin 选择 (pt_min, pt_max)
+          - pt bin 选择 (pt_min, pt_max)
+          - η cut: 若 eta_abs_max 不为 None，则只保留 |eta_e| <= eta_abs_max
         """
         self.electron_index = []  # list of (evt_idx, ele_idx)
 
@@ -112,6 +119,11 @@ class HFSemiClassifier(Dataset):
         for evt in range(n_events):
             n_ele_evt = int(self.nEle[evt])
             for i_ele in range(n_ele_evt):
+                # ----- 0) η cut on electron -----
+                eta_e = float(self.ele_eta[evt][i_ele])
+                if (self.eta_abs_max is not None) and (abs(eta_e) > self.eta_abs_max):
+                    continue
+
                 # ----- 1) 先看是不是 D/B -----
                 raw_tag = int(self.ele_hf_TAG[evt][i_ele])
                 if raw_tag not in (1, 2):
@@ -131,7 +143,10 @@ class HFSemiClassifier(Dataset):
         self._length = len(self.electron_index)
         print(
             f"[HFSemiClassifier] built index with {self._length} electrons "
-            f"(pt_min={self.pt_min}, pt_max={self.pt_max})"
+            f"(pt_min={self.pt_min}, pt_max={self.pt_max}, "
+            f"eta_abs_max={self.eta_abs_max}, "
+            f"use_had_eta={self.use_had_eta}, "
+            f"dphi_windows={self.dphi_windows})"
         )
 
     def __len__(self):
@@ -166,14 +181,41 @@ class HFSemiClassifier(Dataset):
         )
 
         # ---------- hadron 点云特征 ----------
+        # 先选出来自这条 electron 的 hadrons
         had_fromEle_evt = self.had_fromEle[evt_idx]
-        had_mask = (had_fromEle_evt == ele_idx)
+        base_mask = (had_fromEle_evt == ele_idx)
 
-        # 选出属于这条电子的 hadrons
-        had_pt = np.array(self.had_pt[evt_idx][had_mask], dtype=np.float32)
-        had_deta = np.array(self.had_deta[evt_idx][had_mask], dtype=np.float32)
-        had_dphi = np.array(self.had_dphi[evt_idx][had_mask], dtype=np.float32)
-        had_charge = np.array(self.had_charge[evt_idx][had_mask], dtype=np.float32)
+        # 把对应 hadron 的变量取出来（先不做 cut）
+        had_pt_all = np.array(self.had_pt[evt_idx][base_mask], dtype=np.float32)
+        had_deta_all = np.array(self.had_deta[evt_idx][base_mask], dtype=np.float32)
+        had_dphi_all = np.array(self.had_dphi[evt_idx][base_mask], dtype=np.float32)
+        had_charge_all = np.array(self.had_charge[evt_idx][base_mask], dtype=np.float32)
+
+        # ========== 1) |eta_h| cut ==========
+        if self.eta_abs_max is not None and had_deta_all.size > 0:
+            had_eta_global = had_deta_all + eta_e     # eta_h = eta_e + dEta
+            mask_eta = np.abs(had_eta_global) <= self.eta_abs_max
+        else:
+            mask_eta = np.ones_like(had_pt_all, dtype=bool)
+
+        # ========== 2) Δφ cut ==========
+        if self.dphi_windows is not None and had_dphi_all.size > 0:
+            # 初始全部 False
+            mask_dphi = np.zeros_like(had_dphi_all, dtype=bool)
+            for (lo, hi) in self.dphi_windows:
+                # 支持一个或多个区间
+                mask_dphi |= (had_dphi_all >= lo) & (had_dphi_all < hi)
+        else:
+            # 不设 dphi_windows 时，相当于不过 Δφ cut
+            mask_dphi = np.ones_like(had_dphi_all, dtype=bool)
+
+        # ========== 3) 综合 mask ==========
+        mask = mask_eta & mask_dphi
+
+        had_pt = had_pt_all[mask]
+        had_deta = had_deta_all[mask]
+        had_dphi = had_dphi_all[mask]
+        had_charge = had_charge_all[mask]
 
         if had_pt.size > 0:
             if self.use_log_pt:
@@ -184,13 +226,19 @@ class HFSemiClassifier(Dataset):
             sin_dphi = np.sin(had_dphi)
             cos_dphi = np.cos(had_dphi)
 
+            # >>> 如果不用 hadron η，就把这一列置 0
+            if self.use_had_eta:
+                had_deta_feat = had_deta
+            else:
+                had_deta_feat = np.zeros_like(had_deta, dtype=np.float32)
+
             # 组合为 (N_had, 5)
             had_feat = np.stack(
-                [had_pt_feat, had_deta, sin_dphi, cos_dphi, had_charge],
+                [had_pt_feat, had_deta_feat, sin_dphi, cos_dphi, had_charge],
                 axis=-1
             ).astype(np.float32)
         else:
-            # 没有任何 associated hadron 的情况（极少，但为了代码健壮）
+            # 没有任何 associated hadron 的情况（或 cut 全砍掉了）
             had_feat = np.zeros((0, 5), dtype=np.float32)
 
         # ---------- label ----------

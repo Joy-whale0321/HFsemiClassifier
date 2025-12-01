@@ -6,6 +6,7 @@
 import os
 import argparse
 import time
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -13,6 +14,57 @@ from torch.utils.data import DataLoader, random_split
 
 from data_HFSemiClassifier import HFSemiClassifier, hf_semi_collate
 from model_HFSemiClassifier import DeepSetsHF
+
+from math import pi
+from math import pi
+import torch.nn.functional as F  # 如果后面不会用到可以不加，这里保险起见保留
+
+# ==========================================================
+#  根据 electron 的 pt 做 expo 拟合权重
+#   count_D(pt) ≈ exp(A_D + B_D * pt)
+#   count_B(pt) ≈ exp(A_B + B_B * pt)
+A_D, B_D = 15.1744, -1.91749   # ln count_D(pt) ~ A_D + B_D * pt
+A_B, B_B = 12.1074, -1.10499   # ln count_B(pt) ~ A_B + B_B * pt
+W_MAX = 5.0 
+def get_pt_weight_from_logpt(pt_log: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    pt = torch.exp(pt_log)  # (B,)
+
+    w_D = torch.ones_like(pt)
+    w_B = torch.ones_like(pt)
+
+    # ---------- 区间 3 <= pt < 6：用拟合的 expo 权重 ----------
+    mask_low = (pt >= 3.0) & (pt < 6.0)
+    if mask_low.any():
+        pt_low = pt[mask_low]
+
+        logc_D = A_D + B_D * pt_low
+        logc_B = A_B + B_B * pt_low
+
+        logc_D = torch.clamp(logc_D, min=-50.0, max=50.0)
+        logc_B = torch.clamp(logc_B, min=-50.0, max=50.0)
+
+        logc_max = torch.maximum(logc_D, logc_B)
+
+        w_D_low = torch.exp(logc_max - logc_D)
+        w_B_low = torch.exp(logc_max - logc_B)
+
+        w_D[mask_low] = w_D_low
+        w_B[mask_low] = w_B_low
+
+    # ---------- 区间 6 <= pt < 10：手动固定权重 ----------
+    mask_high = (pt >= 6.0) & (pt < 10.0)
+    if mask_high.any():
+        w_D[mask_high] = 3.0
+        w_B[mask_high] = 1.0
+
+    # ---------- 根据标签选对应权重 ----------
+    weights = torch.where(labels == 0, w_D, w_B)
+
+    # 保险起见再截一下最大值（保证不会爆炸）
+    weights = torch.clamp(weights, max=W_MAX)
+
+    return weights
+
 
 # hyperparameters setup
 def parse_args():
@@ -27,13 +79,13 @@ def parse_args():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=256,
+        default=512,
         help="batch size",
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=400,
+        default=300,
         help="训练轮数",
     )
     parser.add_argument(
@@ -45,7 +97,7 @@ def parse_args():
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=0,
+        default=4,
         help="DataLoader 的 num_workers",
     )
     parser.add_argument(
@@ -63,18 +115,27 @@ def parse_args():
     parser.add_argument(
         "--fair-lambda",
         type=float,
-        default=0.1,
+        default=0.3,
         help="平衡两类之间loss差异的正则强度",
+    )
+    parser.add_argument(
+        "--pt-min",
+        type=float,
+        default=3.0,
+        help="electron minimum pt",
+    )
+
+    parser.add_argument(
+        "--pt-max",
+        type=float,
+        default=10.0,
+        help="electron maximum pt",
     )
 
     return parser.parse_args()
 
 # count classes in dataset
 def count_classes(dataset, num_classes=2):
-    """
-    简单统计某个 dataset 里每个 label 的数量。
-    这里默认只关心 0(D) 和 1(B)，所以 num_classes=2。
-    """
     import torch
     counts = torch.zeros(num_classes, dtype=torch.long)
     for i in range(len(dataset)):
@@ -97,7 +158,20 @@ def main():
 
     # ========== dataset and prepare ==========
     print(f"[INFO] Loading dataset from: {args.root_file}")
-    dataset = HFSemiClassifier(args.root_file, tree_name="tree", use_log_pt=True)
+    dataset = HFSemiClassifier(
+        args.root_file,
+        tree_name="tree",
+        use_log_pt=True,
+        pt_min=args.pt_min,
+        pt_max=args.pt_max,
+        eta_abs_max=1.0,
+        use_had_eta=True,
+        # dphi_windows=[
+        #     (-1., 1.),     # 近端 |Δφ| < 0.5
+        #     (-pi, -2.1),     # 远端左边 |Δφ| > 2.6
+        #     (2.1, pi),       # 远端右边 |Δφ| > 2.6
+        # ],
+    )
 
     n_total = len(dataset) # number of total electrons
     n_val = int(n_total * args.val_frac) # number of validation electrons
@@ -113,7 +187,7 @@ def main():
     print(f"[INFO] Train class counts: D(0) = {n_D}, B(1) = {n_B}")
 
     # Calculate the class weight for loss function
-    train_counts_f = train_counts.to(torch.float32).clamp(min=1.0) 
+    train_counts_f = train_counts.to(torch.float32).clamp(min=1.0)  
     class_weights = 1.0 / train_counts_f
     class_weights = class_weights / class_weights.mean()
     print(f"[INFO] Using class weights for loss (D, B) = {class_weights.tolist()}")
@@ -139,28 +213,39 @@ def main():
     )
 
     # ========== model building ==========
+    had_hidden_dims = (128, 128, 128)
+    clf_hidden_dims = (128, 128, 128)
+    set_embed_dim   = 128
+    pooling         = "attn_mean"
+
     model = DeepSetsHF(
         had_input_dim=5,
         ele_input_dim=3,
-        had_hidden_dims=(256, 256, 256, 256),
-        set_embed_dim=256,
-        clf_hidden_dims=(256, 256, 256, 256),
+        had_hidden_dims=had_hidden_dims,
+        set_embed_dim=set_embed_dim,
+        clf_hidden_dims=clf_hidden_dims,
         n_classes=2,
         use_ele_in_had_encoder=False,
-        pooling="attn_mean",
+        use_ele_feat=True,
+        pooling=pooling,
     ).to(device)
 
+
     # loss function and optimizer setup
-    # criterion = nn.CrossEntropyLoss()
-    criterion = nn.CrossEntropyLoss(weight=class_weights, reduction="none")
+    criterion = nn.CrossEntropyLoss(reduction="none")
+    # criterion = nn.CrossEntropyLoss(weight=class_weights, reduction="none")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     print("[INFO] Model constructed:")
     print(model)
 
+    # ======================================================================
     # ========== training and valid epoch loop ==========
-    best_val_eff = 0.0 # for only saving the best model
+    # ======================================================================
+    best_val_loss = float("inf") # for only saving the best model
     start_save_epoch = int(args.epochs * 0.5)  # start doing something after the front epochs
+    train_loss_history = []
+    val_loss_history   = []
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
@@ -169,7 +254,6 @@ def main():
         train_loss = 0.0 # cumulative loss
         train_correct = 0 # number of correct predictions
         train_total = 0 # number of total samples
-        train_kept_total = 0 # number of samples kept after thresholding, cut will reduce some samples 
 
         # for per-class efficiency calculation
         train_class_correct = [0, 0, 0]  # for label 0,1,2
@@ -180,45 +264,32 @@ def main():
             had = batch["had_feat"].to(device)      # (B, N_max, 5) hadron features
             mask = batch["had_mask"].to(device)     # (B, N_max) hadron mask
             labels = batch["label"].to(device)      # (B,) ground-truth labels
+            mask_D = (labels == 0)                  # D on labels
+            mask_B = (labels == 1)                  # B on labels
+
+            # # ===== let hadron features are 0, electron only =====
+            # had = torch.zeros_like(had)
 
             optimizer.zero_grad()
 
-            logits = model(ele, had, mask) # (B, 3) logits for 3 classes without softmax from DeepSetsHF
+            logits = model(ele, had, mask) # (B, 3) logits for 2 classes without softmax from DeepSetsHF
             
-            # loss computation 1 for all samples, 2 for kept samples only
+            # loss function
             # loss = criterion(logits, labels)
             
             per_sample_loss = criterion(logits, labels)        # (B,)
-            # get the max probobility and corresponding predicted class 
-            probs = torch.softmax(logits, dim=-1)              # (B, 2)
-            max_prob, preds = probs.max(dim=-1)                # (B,)
+            base_loss = per_sample_loss.mean()
 
-            # setting a epoch dependent threshold to select the clear samples, avoid removing too many samples at early epochs
-            t_start, t_end = 0.5, 0.5
-            if args.epochs > start_save_epoch:
-                alpha = (epoch - 1) / (args.epochs - 1)
-            else:
-                alpha = 0.01
-            thr = t_start + (t_end - t_start) * alpha # threshold of max probability for removing uncertain samples
+            # ---- 根据 electron 的 log(pt) 计算权重 ----
+            # ele_feat 的第 0 个分量就是 log(pt_e)
+            # pt_log = ele[:, 0].detach()  # 不让梯度通过权重反传回去
+            # weights = get_pt_weight_from_logpt(pt_log, labels)  # (B,)
+            # weights = weights.to(device)
 
-            keep_mask = (max_prob > thr) # (B,), bool mask of samples, satisfying samples as true
+            # # ---- 加权的 base loss ----
+            # base_loss = (weights * per_sample_loss).mean()
 
-            # if no sample is kept, use all samples to avoid empty tensor error
-            if keep_mask.sum() == 0:
-                base_loss = per_sample_loss.mean()
-                num_kept = labels.size(0)
-                used_mask = torch.ones_like(labels, dtype=torch.bool)
-            else:
-                # loss on kept samples only, and count number of kept samples
-                base_loss = per_sample_loss[keep_mask].mean()
-                num_kept = keep_mask.sum().item() # keep_mask.sum() treats bool to int, true=1, false=0
-                used_mask = keep_mask
-
-            # ------- fairness regularization: encourage D/B loss similar -------
-            # 只在本 batch 中 actually 用到的样本上统计（used_mask）
-            mask_D = (labels == 0) & used_mask
-            mask_B = (labels == 1) & used_mask
-
+            # ------- fairness regularization: encourage D/B loss similar --------------
             if mask_D.any() and mask_B.any():
                 loss_D = per_sample_loss[mask_D].mean()
                 loss_B = per_sample_loss[mask_B].mean()
@@ -232,39 +303,28 @@ def main():
             loss.backward()
             optimizer.step()
 
-            # calculate efficiency of kept samples
+            train_loss += loss.item() * labels.size(0)
+
+            # get the max probobility and corresponding predicted class 
+            probs = torch.softmax(logits, dim=-1)              # (B, 2)
+            max_prob, preds = probs.max(dim=-1)                # (B,)
+
+            # calculate efficiency
             train_total += labels.size(0)
-            train_kept_total += num_kept
+            train_correct += (preds == labels).sum().item()
 
-            # train_loss += loss.item() * labels.size(0)
-            train_loss += loss.item() * num_kept
+            # per-class efficiency counting on kept samples
+            for c in range(3):  # 0: D, 1: B, 2: other
+                mask_c = (labels == c)
+                if mask_c.any():
+                    train_class_total[c]   += mask_c.sum().item()
+                    train_class_correct[c] += (preds[mask_c] == labels[mask_c]).sum().item()
 
-            # # correct predictions number counting
-            # preds = torch.argmax(logits, dim=-1)
-            # train_correct += (preds == labels).sum().item()
-            
-            # # per-class efficiency counting
-            # for c in range(3):  # 0: D, 1: B, 2: other
-            #     mask_c = (labels == c)
-            #     if mask_c.any():
-            #         train_class_total[c]   += mask_c.sum().item() # per-class samples counting
-            #         train_class_correct[c] += (preds[mask_c] == labels[mask_c]).sum().item() # per-class correct counting
+        avg_train_loss = train_loss / max(1, train_total)
 
-            if keep_mask.any():
-                preds_kept  = preds[keep_mask]
-                labels_kept = labels[keep_mask]
-
-                train_correct += (preds_kept == labels_kept).sum().item()
-
-                # per-class efficiency counting on kept samples
-                for c in range(3):  # 0: D, 1: B, 2: other
-                    mask_c = (labels_kept == c)
-                    if mask_c.any():
-                        train_class_total[c]   += mask_c.sum().item()
-                        train_class_correct[c] += (preds_kept[mask_c] == labels_kept[mask_c]).sum().item()
-
-        # avg_train_loss = train_loss / max(1, train_total)
-        avg_train_loss = train_loss / max(1, train_kept_total)
+        # showing train efficiency
+        train_eff = train_correct / max(1, train_total)
+        print(f"Epoch {epoch}: train efficiency = {train_eff:.3f}")
 
         # showing per-class efficiency
         names = ["D", "B", "other"]
@@ -276,19 +336,11 @@ def main():
             print(f"    Train {names[c]} eff: {eff_c:.4f} "
                   f"({train_class_correct[c]}/{train_class_total[c]})")
 
-        train_eff = train_correct / max(1, train_total)
-        train_eff_kept = train_correct / max(1, train_kept_total)
-        print(f"Epoch {epoch}: train keep efficiency = {train_eff_kept:.3f}")
-
         # ---- Validate ----
         model.eval()
         val_loss = 0.0
-
-        # 验证集统计量
-        val_total   = 0  # validation all samples
-        val_kept_total   = 0  # validation samples number after cut
-        val_correct_all  = 0  # correct number on all samples
-        val_correct_kept = 0  # correct number on kept samples
+        val_total = 0  # validation all samples
+        val_correct = 0  # correct number on all samples
 
         # per-class count, 0: D, 1: B, 2: other
         val_class_correct = [0, 0, 0]  # label 0, 1, 2
@@ -302,51 +354,48 @@ def main():
                 had = batch["had_feat"].to(device)
                 mask = batch["had_mask"].to(device)
                 labels = batch["label"].to(device)
+                mask_D = (labels == 0)
+                mask_B = (labels == 1)
+
+                # # ===== let hadron features are 0, electron only =====
+                # had = torch.zeros_like(had)
 
                 logits = model(ele, had, mask)
                 per_sample_loss = criterion(logits, labels)      # (B,)
 
+                base_loss = per_sample_loss.mean()
+
+                # ------- fairness regularization: encourage D/B loss similar --------------
+                if mask_D.any() and mask_B.any():
+                    loss_D = per_sample_loss[mask_D].mean()
+                    loss_B = per_sample_loss[mask_B].mean()
+                    fairness_penalty = (loss_D - loss_B) ** 2
+                else:
+                    fairness_penalty = torch.tensor(0.0, device=device)
+
+                loss = base_loss + args.fair_lambda * fairness_penalty
+
+                val_loss += loss.item() * labels.size(0)
+
                 probs = torch.softmax(logits, dim=-1)            # (B, 2)
                 max_prob, preds = probs.max(dim=-1)              # (B,)
 
-                # threshold on validate dataset, same as train
-                thr_val = 0.5
-                keep_mask = (max_prob > thr_val)                 # (B,)
-
-                # statistics loss / eff_on_kept / per-class on kept samples
-                if keep_mask.any():
-                    loss_kept = per_sample_loss[keep_mask].mean()
-                    n_kept = keep_mask.sum().item()
-
-                    # accumulate kept loss (weighted by number of kept samples)
-                    val_loss += loss_kept.item() * n_kept
-                    val_kept_total += n_kept
-
-                    # correct samples number on kept subset
-                    val_correct_kept += (preds[keep_mask] == labels[keep_mask]).sum().item()
-
-                    # per-class count on kept samples
-                    for c in range(3):  # 0: D, 1: B, 3: other
-                        mask_c = (labels == c) & keep_mask
-                        if mask_c.any():
-                            val_class_total[c]   += mask_c.sum().item()
-                            val_class_correct[c] += (preds[mask_c] == labels[mask_c]).sum().item()
-
-                # statistics on all samples (regardless of whether they passed the cut)
-                val_correct_all += (preds == labels).sum().item()
                 val_total  += labels.size(0)
+                val_correct += (preds == labels).sum().item()
+
+                # per-class count on kept samples
+                for c in range(3):  # 0: D, 1: B, 3: other
+                    mask_c = (labels == c)
+                    if mask_c.any():
+                        val_class_total[c]   += mask_c.sum().item()
+                        val_class_correct[c] += (preds[mask_c] == labels[mask_c]).sum().item()
 
         # average loss on kept samples
-        avg_val_loss = val_loss / max(1, val_kept_total)
+        avg_val_loss = val_loss / max(1, val_total)
 
-        # overall efficiency (including samples that did not pass the cut)
-        val_eff_all = val_correct_all / max(1, val_total)
-
-        # keep efficiency: fraction of validation samples passing the cut
-        val_eff = val_kept_total / max(1, val_total)
-
-        # efficiency on kept subset only
-        val_eff_kept = val_correct_kept / max(1, val_kept_total)
+        # efficiency: fraction of correct samples over all
+        val_eff = val_correct / max(1, val_total)
+        print(f"Epoch {epoch}: valid efficiency = {val_eff:.3f}")
 
         # show the per-class eff_on_kept
         for c in range(3):
@@ -357,9 +406,6 @@ def main():
             print(f"    Validate {names[c]} eff_on_kept: {eff_c:.4f} "
                   f"({val_class_correct[c]}/{val_class_total[c]})")
 
-        print(f"[VAL] thr={thr_val:.2f}, eff={val_eff:.3f}, "
-              f"eff_on_kept={val_eff_kept:.3f}, eff_all={val_eff_all:.3f}")
-
         #  Time Performance logging and model saving  
         dt = time.time() - t0
         print(
@@ -369,10 +415,27 @@ def main():
             f"time={dt:.1f}s"
         )
 
+        # record the epoch 的 loss
+        train_loss_history.append(avg_train_loss)
+        val_loss_history.append(avg_val_loss)
+
         # only save the best one
-        if epoch >= start_save_epoch and val_eff > best_val_eff:
-            best_val_eff = val_eff
-            best_path = os.path.join(args.out_dir, "DeepSetsHF_best.pt")
+        if epoch >= start_save_epoch and avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+
+            # pt 区间字符串
+            pt_min_str = f"{args.pt_min:.1f}" if args.pt_min is not None else "None"
+            pt_max_str = f"{args.pt_max:.1f}" if args.pt_max is not None else "None"
+
+            # 网络结构字符串（例如 had3x128_clf3x128_attn_mean）
+            had_arch_str = f"had{len(had_hidden_dims)}x{had_hidden_dims[0]}"
+            clf_arch_str = f"clf{len(clf_hidden_dims)}x{clf_hidden_dims[0]}"
+            arch_str = f"{had_arch_str}_{clf_arch_str}_{pooling}"
+
+            # 拼到文件名里 near sides away sides
+            best_name = f"DeepSetsHF_best_FALL_{pt_min_str}-{pt_max_str}_{arch_str}.pt"
+            best_path = os.path.join(args.out_dir, best_name)
+
             torch.save(
                 {
                     "epoch": epoch,
@@ -387,6 +450,23 @@ def main():
             print(f"[INFO] Best model updated, saved to: {best_path}")
 
     print("[INFO] Training finished.")
+
+    # ====== 训练结束后画 loss 曲线 ======
+    epochs = range(1, args.epochs + 1)
+
+    plt.figure()
+    plt.plot(epochs, train_loss_history, label="train loss")
+    plt.plot(epochs, val_loss_history,   label="val loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title(f"Loss vs Epoch (pt {args.pt_min}-{args.pt_max} GeV)")
+    plt.legend()
+    plt.grid(True)
+
+    loss_fig_path = os.path.join(args.out_dir, f"loss_curve_FALL_pt{args.pt_min}-{args.pt_max}.png")
+    plt.savefig(loss_fig_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"[INFO] Loss curve saved to: {loss_fig_path}")
 
 if __name__ == "__main__":
     main()

@@ -127,6 +127,50 @@ void AnaHFdata(
 
     }
 
+    // Fit to get weights
+    // 对 D-electron pt 拟合
+    TF1* fDe = new TF1("fDe", "expo", 3, 6);  // expo: exp(p0 + p1*x)
+    h1_De_pt->Fit(fDe, "R");                   // R: 只在 [0,10] 内拟合
+
+    // 对 B-electron pt 拟合
+    TF1* fBe = new TF1("fBe", "expo", 3, 6);
+    h1_Be_pt->Fit(fBe, "R");
+
+    // 拿到参数
+    double ADe = fDe->GetParameter(0); // ln 部分的常数项
+    double BDe = fDe->GetParameter(1); // ln 部分的斜率
+    double ABe = fBe->GetParameter(0);
+    double BBe = fBe->GetParameter(1);
+
+    std::cout << "D: ln p ~ " << ADe << " + " << BDe << " * pt" << std::endl;
+    std::cout << "B: ln p ~ " << ABe << " + " << BBe << " * pt" << std::endl;
+
+    // poly func
+    // double fitMin = 3.0;  // 你自己看分布，从这个pt开始拟合
+    // double fitMax = 8.0;  // 比如6 GeV 以内统计多、比较好拟
+
+    // // 三阶多项式：a0 + a1*x + a2*x^2 + a3*x^3
+    // TF1* fDe = new TF1("fDe", "pol5", fitMin, fitMax);
+    // TF1* fBe = new TF1("fBe", "pol5", fitMin, fitMax);
+
+    // h1_De_pt->Fit(fDe, "R");  // 只在[fitMin,fitMax]拟合
+    // h1_Be_pt->Fit(fBe, "R");
+
+    // double aD0 = fDe->GetParameter(0);
+    // double aD1 = fDe->GetParameter(1);
+    // double aD2 = fDe->GetParameter(2);
+    // double aD3 = fDe->GetParameter(3);
+
+    // double aB0 = fBe->GetParameter(0);
+    // double aB1 = fBe->GetParameter(1);
+    // double aB2 = fBe->GetParameter(2);
+    // double aB3 = fBe->GetParameter(3);
+
+    // std::cout << "D count(pt) ~ " 
+    //           << aD0 << " + " << aD1 << " pt + " << aD2 << " pt^2 + " << aD3 << " pt^3\n";
+    // std::cout << "B count(pt) ~ " 
+    //           << aB0 << " + " << aB1 << " pt + " << aB2 << " pt^2 + " << aB3 << " pt^3\n";
+
     // 也可以把结果写到新文件
     TFile* fout = new TFile("PYHF_ana.root", "RECREATE");
     h2->Write();
@@ -136,6 +180,8 @@ void AnaHFdata(
     h1_B_pt->Write();
     h1_De_pt->Write();
     h1_Be_pt->Write();
+    fDe->Write();
+    fBe->Write();
     fout->Close();
 
     // 关闭输入文件
