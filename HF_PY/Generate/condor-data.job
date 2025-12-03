@@ -43,9 +43,9 @@ Initialdir     = /sphenix/user/jzhang1/HFsemiClassifier/HF_PY/Generate
 # The executable we want to run.
 Executable     = $(Initialdir)/run_ppHF.sh
 
-nEvents        = 100000
+nEvents        = 10000000
 PYSet          = ppHF.cmnd
-outName        = ppHF_eXDecay_100k_$(Process).root
+outName        = ppHF_eXDecay_10M_$(Process).root
 
 # The argument to pass to the executable.
 #tracking firt then calo, only one tracking file

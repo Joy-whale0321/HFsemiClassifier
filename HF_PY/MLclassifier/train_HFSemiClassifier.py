@@ -73,7 +73,7 @@ def parse_args():
     parser.add_argument(
         "--root-file",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_100M.root",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_1.root",
         help="Pythia 生成的 ROOT 文件路径",
     )
     parser.add_argument(
@@ -85,13 +85,13 @@ def parse_args():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=300,
+        default=400,
         help="训练轮数",
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=5e-5,
+        default=1e-4,
         help="学习率",
     )
     parser.add_argument(
@@ -115,7 +115,7 @@ def parse_args():
     parser.add_argument(
         "--fair-lambda",
         type=float,
-        default=0.3,
+        default=0.0,
         help="平衡两类之间loss差异的正则强度",
     )
     parser.add_argument(
@@ -128,7 +128,7 @@ def parse_args():
     parser.add_argument(
         "--pt-max",
         type=float,
-        default=10.0,
+        default=3.2,
         help="electron maximum pt",
     )
 
@@ -433,7 +433,7 @@ def main():
             arch_str = f"{had_arch_str}_{clf_arch_str}_{pooling}"
 
             # 拼到文件名里 near sides away sides
-            best_name = f"DeepSetsHF_best_FALL_{pt_min_str}-{pt_max_str}_{arch_str}.pt"
+            best_name = f"DeepSetsHF_best_ALL_{pt_min_str}-{pt_max_str}_{arch_str}.pt"
             best_path = os.path.join(args.out_dir, best_name)
 
             torch.save(
@@ -463,7 +463,7 @@ def main():
     plt.legend()
     plt.grid(True)
 
-    loss_fig_path = os.path.join(args.out_dir, f"loss_curve_FALL_pt{args.pt_min}-{args.pt_max}.png")
+    loss_fig_path = os.path.join(args.out_dir, f"loss_curve_ALL_pt{args.pt_min}-{args.pt_max}.png")
     plt.savefig(loss_fig_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"[INFO] Loss curve saved to: {loss_fig_path}")
