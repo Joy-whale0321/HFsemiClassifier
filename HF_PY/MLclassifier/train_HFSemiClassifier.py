@@ -19,6 +19,8 @@ from math import pi
 from math import pi
 import torch.nn.functional as F  # 如果后面不会用到可以不加，这里保险起见保留
 
+from torch.utils.data import WeightedRandomSampler
+
 # ==========================================================
 #  根据 electron 的 pt 做 expo 拟合权重
 #   count_D(pt) ≈ exp(A_D + B_D * pt)
@@ -65,15 +67,13 @@ def get_pt_weight_from_logpt(pt_log: torch.Tensor, labels: torch.Tensor) -> torc
 
     return weights
 
-
 # hyperparameters setup
 def parse_args():
     parser = argparse.ArgumentParser(description="Train HF semi-leptonic electron classifier (Deep Sets).")
-
     parser.add_argument(
         "--root-file",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_1.root",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_1.root",
         help="Pythia 生成的 ROOT 文件路径",
     )
     parser.add_argument(
@@ -85,7 +85,7 @@ def parse_args():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=400,
+        default=100,
         help="训练轮数",
     )
     parser.add_argument(
@@ -124,14 +124,19 @@ def parse_args():
         default=3.0,
         help="electron minimum pt",
     )
-
     parser.add_argument(
         "--pt-max",
         type=float,
-        default=3.2,
+        default=5.0,
         help="electron maximum pt",
     )
-
+    # early stopping patience
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=30,
+        help="early stopping 的耐心值：验证集 loss 连续多少个 epoch 无提升就停止",
+    )
     return parser.parse_args()
 
 # count classes in dataset
@@ -143,6 +148,77 @@ def count_classes(dataset, num_classes=2):
         if 0 <= y < num_classes:
             counts[y] += 1
     return counts
+
+def downsample_by_class(subset, n_keep_dict, num_classes=2, name="set"):
+    """
+    手动按类别裁剪：
+      - subset: 可以是 HFSemiClassifier 或 torch.utils.data.Subset
+      - n_keep_dict: dict，比如 {0: 10000, 1: 8000}
+         * 如果某个 label 不在这个 dict 里，就一律“全保留”
+      - num_classes: 只用于统计，比如 2 就只统计 0/1，其它 label 归类到“other”里
+      - name: 打印信息用的名字（train / val）
+
+    返回：裁剪后的 Subset（如果不需要裁剪就返回原 subset）
+    """
+    import torch
+    from torch.utils.data import Subset
+
+    # 先看原始分布（只统计 0..num_classes-1）
+    counts_before = count_classes(subset, num_classes=num_classes)
+    print(f"[INFO] {name}: before downsample, class counts (0..{num_classes-1}) = {counts_before.tolist()}")
+
+    # 如果 n_keep_dict 为空或者所有值 <= 0，就不裁剪
+    if not n_keep_dict or all((v is None or v <= 0) for v in n_keep_dict.values()):
+        print(f"[INFO] {name}: n_keep_dict empty or all <=0, skip downsample.")
+        return subset
+
+    idx_per_class = {c: [] for c in range(num_classes)}
+    idx_rest = []  # 不在 0..num_classes-1 的都放这里，全部保留
+
+    # 收集索引
+    for i in range(len(subset)):
+        y = int(subset[i]["label"])
+        if 0 <= y < num_classes:
+            idx_per_class[y].append(i)
+        else:
+            idx_rest.append(i)
+
+    # 对每个 class 做裁剪
+    selected_indices = []
+
+    for c in range(num_classes):
+        idx_list = idx_per_class[c]
+        n_all = len(idx_list)
+        if n_all == 0:
+            continue
+
+        n_keep = n_keep_dict.get(c, None)
+        if (n_keep is None) or (n_keep <= 0) or (n_keep >= n_all):
+            # 不限制 / 不需要裁剪：全保留
+            selected_indices.extend(idx_list)
+        else:
+            # 随机取 n_keep 个
+            idx_tensor = torch.tensor(idx_list, dtype=torch.long)
+            perm = torch.randperm(n_all)
+            chosen = idx_tensor[perm[:n_keep]].tolist()
+            selected_indices.extend(chosen)
+
+    # 其它 label（比如 label=2）全部保留
+    selected_indices.extend(idx_rest)
+
+    # 整体 shuffle 一下
+    selected_indices = torch.tensor(selected_indices, dtype=torch.long)
+    perm_all = torch.randperm(len(selected_indices))
+    selected_indices = selected_indices[perm_all].tolist()
+
+    # 用 Subset 包起来
+    new_subset = Subset(subset, selected_indices)
+
+    # 再数一次 0..num_classes-1 的分布
+    counts_after = count_classes(new_subset, num_classes=num_classes)
+    print(f"[INFO] {name}: after  downsample, class counts (0..{num_classes-1}) = {counts_after.tolist()}")
+
+    return new_subset
 
 # main training and valid loop
 def main():
@@ -171,6 +247,8 @@ def main():
         #     (-pi, -2.1),     # 远端左边 |Δφ| > 2.6
         #     (2.1, pi),       # 远端右边 |Δφ| > 2.6
         # ],
+        had_pt_min=0.5,    # 举例：只用 pt > 0.5 GeV 的 hadron
+        had_pt_max=None,
     )
 
     n_total = len(dataset) # number of total electrons
@@ -180,11 +258,39 @@ def main():
 
     print(f"[INFO] Total electrons: {n_total}, train: {n_train}, val: {n_val}")
 
-    # count class D/B distribution in training set
+    # ========= 手动给每个 set 设置要保留多少 =========
+    # 你可以在这里直接改这些数字：
+    #   比如 train 想要 D/B 各 10000, val 想要 D/B 各 3000
+    n_keep_train = {
+        0: 4800,   # label 0 (D)，<=0 或 None 表示“不裁剪，全部保留”
+        1: 4800,   # label 1 (B)
+    }
+    n_keep_val = {
+        0: 1600,
+        1: 1600,
+    }
+
+    # 对 train_set 裁剪
+    train_set = downsample_by_class(
+        train_set,
+        n_keep_dict=n_keep_train,
+        num_classes=2,
+        name="train"
+    )
+
+    # 对 val_set 裁剪
+    val_set = downsample_by_class(
+        val_set,
+        n_keep_dict=n_keep_val,
+        num_classes=2,
+        name="val"
+    )
+
+    # ========= 裁剪完以后再统计一下 train 分布，并算 class_weights =========
     train_counts = count_classes(train_set, num_classes=2)
     n_D = train_counts[0].item() # number of D with label 0
     n_B = train_counts[1].item() # number of B with label 1
-    print(f"[INFO] Train class counts: D(0) = {n_D}, B(1) = {n_B}")
+    print(f"[INFO] Train class counts (after downsample): D(0) = {n_D}, B(1) = {n_B}")
 
     # Calculate the class weight for loss function
     train_counts_f = train_counts.to(torch.float32).clamp(min=1.0)  
@@ -230,11 +336,15 @@ def main():
         pooling=pooling,
     ).to(device)
 
-
     # loss function and optimizer setup
     criterion = nn.CrossEntropyLoss(reduction="none")
     # criterion = nn.CrossEntropyLoss(weight=class_weights, reduction="none")
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=args.lr,
+        weight_decay=1e-4, # L2 正则强度
+    )
 
     print("[INFO] Model constructed:")
     print(model)
@@ -243,9 +353,12 @@ def main():
     # ========== training and valid epoch loop ==========
     # ======================================================================
     best_val_loss = float("inf") # for only saving the best model
-    start_save_epoch = int(args.epochs * 0.5)  # start doing something after the front epochs
+    start_save_epoch = int(args.epochs * 0.3)  # start doing something after the front epochs
     train_loss_history = []
     val_loss_history   = []
+
+    # early stopping 相关
+    epochs_no_improve = 0   # 连续多少 epoch 没有提升
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
@@ -419,6 +532,16 @@ def main():
         train_loss_history.append(avg_train_loss)
         val_loss_history.append(avg_val_loss)
 
+        # early stopping check
+        loss_change = best_val_loss - avg_val_loss
+        if loss_change < 1e-4:
+            epochs_no_improve += 1
+        else:
+            epochs_no_improve = 0
+        if epochs_no_improve >= args.patience:
+            print(f"[INFO] Early stopping triggered after {args.patience} epochs with no improvement.")
+            break
+
         # only save the best one
         if epoch >= start_save_epoch and avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
@@ -433,7 +556,7 @@ def main():
             arch_str = f"{had_arch_str}_{clf_arch_str}_{pooling}"
 
             # 拼到文件名里 near sides away sides
-            best_name = f"DeepSetsHF_best_ALL_{pt_min_str}-{pt_max_str}_{arch_str}.pt"
+            best_name = f"DeepSetsHF_best_ALL_{pt_min_str}-{pt_max_str}_{arch_str}_woW.pt"
             best_path = os.path.join(args.out_dir, best_name)
 
             torch.save(
@@ -463,7 +586,7 @@ def main():
     plt.legend()
     plt.grid(True)
 
-    loss_fig_path = os.path.join(args.out_dir, f"loss_curve_ALL_pt{args.pt_min}-{args.pt_max}.png")
+    loss_fig_path = os.path.join(args.out_dir, f"loss_curve_ALL_pt{args.pt_min}-{args.pt_max}_woW.png")
     plt.savefig(loss_fig_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"[INFO] Loss curve saved to: {loss_fig_path}")
