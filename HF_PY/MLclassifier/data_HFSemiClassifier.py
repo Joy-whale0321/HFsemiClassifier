@@ -4,7 +4,6 @@ import awkward as ak
 import torch
 from torch.utils.data import Dataset
 
-
 class HFSemiClassifier(Dataset):
     """
     Heavy-Flavor Semi-leptonic electron classifier dataset.
@@ -40,20 +39,24 @@ class HFSemiClassifier(Dataset):
 
         例如:
           dphi_windows = [(-np.pi/2, np.pi/2)]
-          dphi_windows = [(-np.pi/3, np.pi/3), (2.0, 3.0)]
-        若为 None，则不对 Δφ 做 cut。
+          dphi_windows = [(-np.pi, -np.pi/2), (np.pi/2, np.pi)]
+    had_pt_min, had_pt_max : float or None
+        hadron 的 pt cut：只保留满足 had_pt_min <= had_pt < had_pt_max 的 hadron。
+        若为 None 则对应一侧不做 cut。
     """
 
     def __init__(
         self,
-        root_file: str,
-        tree_name: str = "tree",
-        use_log_pt: bool = True,
-        pt_min: float | None = None,
-        pt_max: float | None = None,
-        eta_abs_max: float | None = 1.0,
-        use_had_eta: bool = True,
-        dphi_windows: list[tuple[float, float]] | None = None,  # <<< 新增
+        root_file: str, # dataset root file
+        tree_name: str = "tree", # tree name of data
+        use_log_pt: bool = True, # whether using pt or log pt
+        pt_min: float | None = None, # pt min cut for electron
+        pt_max: float | None = None, # pt max cut for electron
+        eta_abs_max: float | None = 1.0, # eta cut for electron and hadron
+        use_had_eta: bool = True, # whether using hadron eta information
+        dphi_windows: list[tuple[float, float]] | None = None, # phi acceptance of hadron
+        had_pt_min: float | None = None, # pt min cut for hadron
+        had_pt_max: float | None = None, # pt max cut for hadron
     ):
         super().__init__()
 
@@ -64,9 +67,12 @@ class HFSemiClassifier(Dataset):
         self.pt_max = pt_max
         self.eta_abs_max = eta_abs_max
         self.use_had_eta = use_had_eta
-        self.dphi_windows = dphi_windows  # <<< 新增
+        self.dphi_windows = dphi_windows
 
-        # 打开 ROOT 文件并读取需要的分支
+        self.had_pt_min = had_pt_min
+        self.had_pt_max = had_pt_max
+
+        # open the ROOT file and readout the branch
         file = uproot.open(self.root_file)
         tree = file[self.tree_name]
 
@@ -81,13 +87,14 @@ class HFSemiClassifier(Dataset):
             "had_fromEle",
             "had_charge",
             "had_pt",
-            "had_eta",   # already Δη
-            "had_phi",   # already Δφ
+            "had_eta",   # now is Δη
+            "had_phi",   # now is Δφ
         ]
 
+        # readout the branches as ak(Awkward Array, eg.arrays["pt"])
         arrays = tree.arrays(branches, library="ak")
 
-        # 保存为成员变量（都是 awkward.Array，形状 (nEvents, variable-length)）
+        # electron related information
         self.nEle = arrays["nEle"]
         self.ele_charge = arrays["ele_charge"]
         self.ele_pt = arrays["ele_pt"]
@@ -95,23 +102,25 @@ class HFSemiClassifier(Dataset):
         self.ele_phi = arrays["ele_phi"]
         self.ele_hf_TAG = arrays["ele_hf_TAG"]
 
+        # hadron related information
         self.nHad_away = arrays["nHad_away"]
         self.had_fromEle = arrays["had_fromEle"]
         self.had_charge = arrays["had_charge"]
         self.had_pt = arrays["had_pt"]
+        # rename had_deta and had_dphi
         self.had_deta = arrays["had_eta"]   # already Δη = eta_h - eta_e
         self.had_dphi = arrays["had_phi"]   # already Δφ = phi_h - phi_e
 
-        # 建立 "全局电子索引表"：sample_idx -> (event_idx, ele_local_idx)
+        # build "electron index table": sample_idx -> (event_idx, ele_local_idx)
         self._build_index()
 
     def _build_index(self):
         """
-        遍历所有 event，为每条电子建立一个全局 index。
+        loop over all events, and creat global index for each electron
         同时在这里做：
-          - 只保留 D/B (ele_hf_TAG=1/2)
+          - only keep e from D/B semileptonic decay (ele_hf_TAG=1/2)
           - pt bin 选择 (pt_min, pt_max)
-          - η cut: 若 eta_abs_max 不为 None，则只保留 |eta_e| <= eta_abs_max
+          - η cut: 若 eta_abs_max 不为 None, 则只保留 |eta_e| <= eta_abs_max
         """
         self.electron_index = []  # list of (evt_idx, ele_idx)
 
@@ -119,25 +128,25 @@ class HFSemiClassifier(Dataset):
         for evt in range(n_events):
             n_ele_evt = int(self.nEle[evt])
             for i_ele in range(n_ele_evt):
-                # ----- 0) η cut on electron -----
+                # ----- η cut on electron -----
                 eta_e = float(self.ele_eta[evt][i_ele])
                 if (self.eta_abs_max is not None) and (abs(eta_e) > self.eta_abs_max):
                     continue
 
-                # ----- 1) 先看是不是 D/B -----
+                # ----- is electron from D/B -----
                 raw_tag = int(self.ele_hf_TAG[evt][i_ele])
                 if raw_tag not in (1, 2):
                     # raw_tag == 0: other，直接丢弃
                     continue
 
-                # ----- 2) 再看 pt bin cut -----
+                # ----- then doing pt bin cut -----
                 pt_e = float(self.ele_pt[evt][i_ele])
                 if self.pt_min is not None and pt_e < self.pt_min:
                     continue
                 if self.pt_max is not None and pt_e >= self.pt_max:
                     continue
 
-                # 通过所有 cut，就保留
+                # keep the sample if pass all cuts
                 self.electron_index.append((evt, i_ele))
 
         self._length = len(self.electron_index)
@@ -146,7 +155,8 @@ class HFSemiClassifier(Dataset):
             f"(pt_min={self.pt_min}, pt_max={self.pt_max}, "
             f"eta_abs_max={self.eta_abs_max}, "
             f"use_had_eta={self.use_had_eta}, "
-            f"dphi_windows={self.dphi_windows})"
+            f"had_pt_min={self.had_pt_min}, had_pt_max={self.had_pt_max}, "
+            f"dphi_windows={self.dphi_windows})",
         )
 
     def __len__(self):
@@ -162,10 +172,13 @@ class HFSemiClassifier(Dataset):
             "had_feat": (N_had, 5) float32 tensor,
             "label":    () long tensor (0/1/2)
           }
+
+        mask is bool array and its length same as the target array T_arr,
+        eg. T_arr[mask_arr] is results with only keep true elements 
         """
         evt_idx, ele_idx = self.electron_index[idx]
 
-        # ---------- 电子特征 ----------
+        # ---------- feature of electron ----------
         pt_e = float(self.ele_pt[evt_idx][ele_idx])
         eta_e = float(self.ele_eta[evt_idx][ele_idx])
         charge_e = float(self.ele_charge[evt_idx][ele_idx])  # -1 or +1
@@ -180,37 +193,41 @@ class HFSemiClassifier(Dataset):
             dtype=np.float32
         )
 
-        # ---------- hadron 点云特征 ----------
-        # 先选出来自这条 electron 的 hadrons
+        # ---------- feature of hadron ----------
         had_fromEle_evt = self.had_fromEle[evt_idx]
         base_mask = (had_fromEle_evt == ele_idx)
 
-        # 把对应 hadron 的变量取出来（先不做 cut）
         had_pt_all = np.array(self.had_pt[evt_idx][base_mask], dtype=np.float32)
         had_deta_all = np.array(self.had_deta[evt_idx][base_mask], dtype=np.float32)
         had_dphi_all = np.array(self.had_dphi[evt_idx][base_mask], dtype=np.float32)
         had_charge_all = np.array(self.had_charge[evt_idx][base_mask], dtype=np.float32)
 
-        # ========== 1) |eta_h| cut ==========
+        # mask base on the cuts, unsatisified is false will be masked
+        # ========== 1 eta cut ==========
         if self.eta_abs_max is not None and had_deta_all.size > 0:
             had_eta_global = had_deta_all + eta_e     # eta_h = eta_e + dEta
             mask_eta = np.abs(had_eta_global) <= self.eta_abs_max
         else:
             mask_eta = np.ones_like(had_pt_all, dtype=bool)
 
-        # ========== 2) Δφ cut ==========
+        # ========== 2 delta phi cut ==========
         if self.dphi_windows is not None and had_dphi_all.size > 0:
-            # 初始全部 False
+            # initial with all false
             mask_dphi = np.zeros_like(had_dphi_all, dtype=bool)
-            for (lo, hi) in self.dphi_windows:
-                # 支持一个或多个区间
-                mask_dphi |= (had_dphi_all >= lo) & (had_dphi_all < hi)
+            for (low_phi, high_phi) in self.dphi_windows:
+                # pass one or more region, |= to include all windows 
+                mask_dphi |= (had_dphi_all >= low_phi) & (had_dphi_all < high_phi)
         else:
-            # 不设 dphi_windows 时，相当于不过 Δφ cut
+            # elseif without dphi_windows, not cuts no mask_dphi 
             mask_dphi = np.ones_like(had_dphi_all, dtype=bool)
 
-        # ========== 3) 综合 mask ==========
+        # ========== 3 综合 mask (η, Δφ, pt_h) ==========
         mask = mask_eta & mask_dphi
+        # pt cut on hadron
+        if self.had_pt_min is not None:
+            mask &= (had_pt_all >= self.had_pt_min)
+        if self.had_pt_max is not None:
+            mask &= (had_pt_all < self.had_pt_max)
 
         had_pt = had_pt_all[mask]
         had_deta = had_deta_all[mask]
@@ -226,22 +243,22 @@ class HFSemiClassifier(Dataset):
             sin_dphi = np.sin(had_dphi)
             cos_dphi = np.cos(had_dphi)
 
-            # >>> 如果不用 hadron η，就把这一列置 0
+            # if hadron eta not be used，setting them all are 0
             if self.use_had_eta:
                 had_deta_feat = had_deta
             else:
                 had_deta_feat = np.zeros_like(had_deta, dtype=np.float32)
 
-            # 组合为 (N_had, 5)
+            # combined these features (N_had, 5)
             had_feat = np.stack(
                 [had_pt_feat, had_deta_feat, sin_dphi, cos_dphi, had_charge],
                 axis=-1
             ).astype(np.float32)
         else:
-            # 没有任何 associated hadron 的情况（或 cut 全砍掉了）
+            # if no pass cuts associated hadron
             had_feat = np.zeros((0, 5), dtype=np.float32)
 
-        # ---------- label ----------
+        # ---------- label, retag the origin of electron ----------
         raw_tag = int(self.ele_hf_TAG[evt_idx][ele_idx])
         if raw_tag == 1:
             label = 0  # class 0: D
@@ -250,7 +267,7 @@ class HFSemiClassifier(Dataset):
         else:
             label = 2  # class 2: other
 
-        # 转成 torch.Tensor
+        # turn np.array to torch.Tensor
         ele_feat = torch.from_numpy(ele_feat)              # (3,)
         had_feat = torch.from_numpy(had_feat)              # (N_had, 5)
         label = torch.tensor(label, dtype=torch.long)      # ()
@@ -264,37 +281,36 @@ class HFSemiClassifier(Dataset):
 
 def hf_semi_collate(batch):
     """
-    自定义 collate_fn，用于 DataLoader，处理 variable-length hadron 点云。
+    把很多个样本拼成一个 batch”时用的打包函数, 
+    因为每条电子对应的 hadron 数量 N_had 不一样(变长点云),PyTorch 默认的 collate 没法直接 stack
+    需要写一个规则：把变长 hadron 点云 pad 成同样长度，再配一个 mask 告诉模型哪些是真实 hadron,哪些是补零。
 
-    输入: batch 是一个 list，每个元素是 HFSemiClassifier.__getitem__ 返回的 dict
-    输出: 一个打包好的 dict:
-      {
-        "ele_feat": (B, 3),
-        "had_feat": (B, N_max, 5),
-        "had_mask": (B, N_max), bool, True=有效点, False=padding
-        "label":    (B,)
-      }
+    自定义 collate_fn:
+      - ele_feat: 直接堆叠 -> (B, 3)
+      - had_feat: pad 到同样长度 N_max -> (B, N_max, 5)
+      - had_mask: True/False -> 表示该位置是否为真实 hadron
+      - label: (B,)
     """
     batch_size = len(batch)
 
-    # 电子特征：直接 stack
+    # 1) stack ele_feat
     ele_feats = torch.stack([item["ele_feat"] for item in batch], dim=0)  # (B, 3)
+    labels = torch.stack([item["label"] for item in batch], dim=0)        # (B,)
 
-    # label：直接 stack
-    labels = torch.stack([item["label"] for item in batch], dim=0)       # (B,)
-
-    # hadron 点云：需要 padding
-    n_hads = [item["had_feat"].shape[0] for item in batch]
-    max_hads = max(n_hads) if n_hads else 0
+    # 2) 处理变长的 had_feat, 统计每条电子有多少个 hadron，并找本 batch 的最大值
+    had_lengths = [item["had_feat"].shape[0] for item in batch]
+    max_hads = max(had_lengths) if had_lengths else 0
 
     if max_hads == 0:
-        # 极端情况：所有样本都没有 hadron
+        # there is no hadrons on all samples in this batch
         had_feats = torch.zeros(batch_size, 0, 5, dtype=torch.float32)
         had_mask = torch.zeros(batch_size, 0, dtype=torch.bool)
     else:
+        # fill 0 first
         had_feats = torch.zeros(batch_size, max_hads, 5, dtype=torch.float32)
         had_mask = torch.zeros(batch_size, max_hads, dtype=torch.bool)
 
+        # then fill the hadron info. into
         for i, item in enumerate(batch):
             h = item["had_feat"]
             n = h.shape[0]

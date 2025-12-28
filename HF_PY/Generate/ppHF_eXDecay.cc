@@ -23,7 +23,7 @@
 
 using namespace Pythia8;
 
-// ===================== 工具函数 =====================
+// ===================== tool function =====================
 
 // open charm meson：PDG 400~499
 bool isCharmMeson(int id)

@@ -127,7 +127,7 @@ def parse_args():
     parser.add_argument(
         "--pt-max",
         type=float,
-        default=5.0,
+        default=3.1,
         help="electron maximum pt",
     )
     # early stopping patience
@@ -247,7 +247,7 @@ def main():
         #     (-pi, -2.1),     # 远端左边 |Δφ| > 2.6
         #     (2.1, pi),       # 远端右边 |Δφ| > 2.6
         # ],
-        had_pt_min=0.5,    # 举例：只用 pt > 0.5 GeV 的 hadron
+        had_pt_min=0.2,    # 举例：只用 pt > 0.5 GeV 的 hadron
         had_pt_max=None,
     )
 
@@ -260,14 +260,14 @@ def main():
 
     # ========= 手动给每个 set 设置要保留多少 =========
     # 你可以在这里直接改这些数字：
-    #   比如 train 想要 D/B 各 10000, val 想要 D/B 各 3000
+    # 比如 train 想要 D/B 各 10000, val 想要 D/B 各 3000
     n_keep_train = {
-        0: 4800,   # label 0 (D)，<=0 或 None 表示“不裁剪，全部保留”
-        1: 4800,   # label 1 (B)
+        0: 45000,   # label 0 (D)，<=0 或 None 表示“不裁剪，全部保留”
+        1: 45000,   # label 1 (B)
     }
     n_keep_val = {
-        0: 1600,
-        1: 1600,
+        0: 15000,
+        1: 15000,
     }
 
     # 对 train_set 裁剪

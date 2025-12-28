@@ -27,13 +27,13 @@ def parse_args():
     parser.add_argument(
         "--root-file",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_1B.root",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_2.root",
         help="Pythia 生成的 ROOT 文件路径（和训练时一致）",
     )
     parser.add_argument(
         "--ckpt",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/MLclassifier/Weight_of_Model/DeepSetsHF_best_NA_3.0-10.0_had3x128_clf3x128_attn_mean.pt",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/MLclassifier/Weight_of_Model/DeepSetsHF_best_ALL_3.0-5.0_had3x128_clf3x128_attn_mean_woW.pt",
         help="训练时保存的最优模型 checkpoint 路径",
     )
     parser.add_argument(
@@ -157,7 +157,7 @@ def main():
 
     # ========= 1. 准备数据 =========
     print(f"[INFO] Loading dataset from: {args.root_file}")
-    dataset = HFSemiClassifier(args.root_file, tree_name="tree", use_log_pt=True, pt_min=3.0, pt_max=10.0)
+    dataset = HFSemiClassifier(args.root_file, tree_name="tree", use_log_pt=True, pt_min=3.0, pt_max=5.0)
 
     n_total = len(dataset)
     n_val = int(n_total * args.val_frac)
