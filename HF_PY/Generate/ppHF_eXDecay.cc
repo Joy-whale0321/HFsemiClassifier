@@ -282,8 +282,8 @@ int main(int argc, char* argv[])
     pythia.init();
 
     // --- ROOT output setting ---
-    // std::string outDir = "/sphenix/user/jzhang1/HFsemiClassifier/HF_PY/Generate/DataSet/";
-    std::string outDir = "./";
+    std::string outDir = "/sphenix/user/jzhang1/HFsemiClassifier/HF_PY/Generate/DataSet/";
+    // std::string outDir = "./";
     std::string outNameFile = outDir + outName;
     TFile* fout = new TFile(outNameFile.c_str(), "RECREATE");
     TTree* t    = new TTree("tree", "HF semi-leptonic electrons + away-side hadrons (event-wise)");
