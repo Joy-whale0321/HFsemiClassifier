@@ -57,6 +57,7 @@ class HFSemiClassifier(Dataset):
         dphi_windows: list[tuple[float, float]] | None = None, # phi acceptance of hadron
         had_pt_min: float | None = None, # pt min cut for hadron
         had_pt_max: float | None = None, # pt max cut for hadron
+        min_had: int = 0,
     ):
         super().__init__()
 
@@ -71,6 +72,8 @@ class HFSemiClassifier(Dataset):
 
         self.had_pt_min = had_pt_min
         self.had_pt_max = had_pt_max
+
+        self.min_had = int(min_had) 
 
         # open the ROOT file and readout the branch
         file = uproot.open(self.root_file)
@@ -146,6 +149,42 @@ class HFSemiClassifier(Dataset):
                 if self.pt_max is not None and pt_e >= self.pt_max:
                     continue
 
+                # ----- min_had cut: 先按 __getitem__ 同样规则算该 electron 对应的有效 hadron 数 -----
+                if self.min_had > 0:
+                    # 只拿“属于这个 electron”的 hadrons（had_fromEle==i_ele）
+                    had_fromEle_evt = np.array(self.had_fromEle[evt], dtype=np.int32)
+                    base_mask = (had_fromEle_evt == i_ele)
+
+                    had_pt_all   = np.array(self.had_pt[evt][base_mask], dtype=np.float32)
+                    had_deta_all = np.array(self.had_deta[evt][base_mask], dtype=np.float32)
+                    had_dphi_all = np.array(self.had_dphi[evt][base_mask], dtype=np.float32)
+
+                    # 1) eta cut（和 __getitem__ 一样的逻辑）:contentReference[oaicite:3]{index=3}
+                    if self.eta_abs_max is not None and had_deta_all.size > 0:
+                        had_eta_global = had_deta_all + eta_e
+                        mask_eta = np.abs(had_eta_global) <= self.eta_abs_max
+                    else:
+                        mask_eta = np.ones_like(had_pt_all, dtype=bool)
+
+                    # 2) dphi cut（和 __getitem__ 一样的逻辑）:contentReference[oaicite:4]{index=4}
+                    if self.dphi_windows is not None and had_dphi_all.size > 0:
+                        mask_dphi = np.zeros_like(had_dphi_all, dtype=bool)
+                        for (low_phi, high_phi) in self.dphi_windows:
+                            mask_dphi |= (had_dphi_all >= low_phi) & (had_dphi_all < high_phi)
+                    else:
+                        mask_dphi = np.ones_like(had_dphi_all, dtype=bool)
+
+                    # 3) had_pt cut（和 __getitem__ 一样的逻辑）:contentReference[oaicite:5]{index=5}
+                    mask = mask_eta & mask_dphi
+                    if self.had_pt_min is not None:
+                        mask &= (had_pt_all >= self.had_pt_min)
+                    if self.had_pt_max is not None:
+                        mask &= (had_pt_all < self.had_pt_max)
+
+                    if int(mask.sum()) < self.min_had:
+                        continue
+                # ----- end min_had cut -----
+                
                 # keep the sample if pass all cuts
                 self.electron_index.append((evt, i_ele))
 

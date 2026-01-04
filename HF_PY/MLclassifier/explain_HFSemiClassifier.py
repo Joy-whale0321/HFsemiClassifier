@@ -6,6 +6,13 @@
 # 另外根据验证集的输出画 ROC 曲线并计算 AUC。
 # 现在增加：按 electron pT 分 4 个区间 (3–4, 4–6, 6–8, ≥8 GeV)
 # 分别画 ROC 和 eff–purity。
+#
+# [MOD] 不再 split train/val（这是另一个 dataset）。
+#       新增：按类别(0=D,1=B)裁剪/平衡样本数，然后直接在该子集上评估与导出 attention。
+#
+# [NEW] 新增：画网络输出分布（True D vs True B）
+#       - p(B) 的分布
+#       - logit_B - logit_D 的分布
 
 import os
 import argparse
@@ -17,7 +24,6 @@ import matplotlib.pyplot as plt   # 用于画 ROC / eff–purity 曲线
 
 from data_HFSemiClassifier import HFSemiClassifier, hf_semi_collate
 from model_HFSemiClassifier import DeepSetsHF
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -33,7 +39,7 @@ def parse_args():
     parser.add_argument(
         "--ckpt",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/MLclassifier/Weight_of_Model/DeepSetsHF_best_ALL_3.0-5.0_had3x128_clf3x128_attn_mean_woW.pt",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/MLclassifier/Weight_of_Model/DeepSetsHF_best_5FALL_3.0-3.1_had3x128_clf3x128_sum_M10.pt",
         help="训练时保存的最优模型 checkpoint 路径",
     )
     parser.add_argument(
@@ -42,16 +48,11 @@ def parse_args():
         default=512,
         help="DataLoader batch size",
     )
-    parser.add_argument(
-        "--val-frac",
-        type=float,
-        default=0.25,
-        help="从全数据中拿多少做解释（和 train.py 一样的 random_split 方式）",
-    )
+
     parser.add_argument(
         "--max-events",
         type=int,
-        default=5000,
+        default=4000000000,
         help="最多解释多少个 event（防止太大）; <=0 表示全用",
     )
     parser.add_argument(
@@ -65,6 +66,31 @@ def parse_args():
         type=int,
         default=5,
         help="示例打印中，每个 event 展示 top-k hadron",
+    )
+
+    # [MOD] 新增：按类别裁剪/平衡
+    parser.add_argument(
+        "--keep-D",
+        type=int,
+        default=5000,
+        help="保留多少 D(label=0) 样本；<=0 表示不限制",
+    )
+    parser.add_argument(
+        "--keep-B",
+        type=int,
+        default=5000,
+        help="保留多少 B(label=1) 样本；<=0 表示不限制",
+    )
+    parser.add_argument(
+        "--balance",
+        action="store_true",
+        help="如果未显式指定 keep-D/keep-B，则自动平衡到 min(nD, nB)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=12345,
+        help="裁剪/抽样用随机种子（保证可复现）",
     )
 
     return parser.parse_args()
@@ -148,6 +174,161 @@ def compute_roc_auc(y_true, y_score):
     return fpr_arr, tpr_arr, thresholds, auc_value
 
 
+# ===================== [MOD] 新增：按类别统计与裁剪 =====================
+
+def count_classes(dataset_or_subset, num_classes=2):
+    counts = np.zeros(num_classes, dtype=np.int64)
+    for i in range(len(dataset_or_subset)):
+        y = int(dataset_or_subset[i]["label"])
+        if 0 <= y < num_classes:
+            counts[y] += 1
+    return counts
+
+
+def downsample_by_class(dataset_or_subset, n_keep_dict, num_classes=2, seed=12345, name="set"):
+    """
+    手动按类别裁剪（返回 torch.utils.data.Subset）：
+      - dataset_or_subset: HFSemiClassifier 或 torch.utils.data.Subset
+      - n_keep_dict: dict，比如 {0: 45000, 1: 45000}
+         * <=0 或 None 表示“不限制，全部保留”
+      - seed: 保证随机裁剪可复现
+      - name: 打印用
+
+    注意：不会做 train/val split，只是在当前集合上裁剪。
+    """
+    from torch.utils.data import Subset
+
+    counts_before = count_classes(dataset_or_subset, num_classes=num_classes)
+    print(f"[INFO] {name}: before downsample, class counts (0..{num_classes-1}) = {counts_before.tolist()}")
+
+    if (not n_keep_dict) or all((v is None or v <= 0) for v in n_keep_dict.values()):
+        print(f"[INFO] {name}: n_keep_dict empty or all <=0, skip downsample.")
+        return dataset_or_subset
+
+    rng = np.random.default_rng(seed)
+
+    idx_per_class = {c: [] for c in range(num_classes)}
+    idx_rest = []  # 不在 0..num_classes-1 的都放这里，全部保留
+
+    for i in range(len(dataset_or_subset)):
+        y = int(dataset_or_subset[i]["label"])
+        if 0 <= y < num_classes:
+            idx_per_class[y].append(i)
+        else:
+            idx_rest.append(i)
+
+    selected_indices = []
+
+    for c in range(num_classes):
+        idx_list = np.array(idx_per_class[c], dtype=np.int64)
+        n_all = idx_list.size
+        if n_all == 0:
+            continue
+
+        n_keep = n_keep_dict.get(c, None)
+        if (n_keep is None) or (n_keep <= 0) or (n_keep >= n_all):
+            selected_indices.extend(idx_list.tolist())
+        else:
+            chosen = rng.choice(idx_list, size=n_keep, replace=False)
+            selected_indices.extend(chosen.tolist())
+
+    selected_indices.extend(idx_rest)
+
+    # 全局 shuffle 一下（不引入顺序偏置）
+    selected_indices = np.array(selected_indices, dtype=np.int64)
+    rng.shuffle(selected_indices)
+    selected_indices = selected_indices.tolist()
+
+    new_subset = Subset(dataset_or_subset, selected_indices)
+
+    counts_after = count_classes(new_subset, num_classes=num_classes)
+    print(f"[INFO] {name}: after  downsample, class counts (0..{num_classes-1}) = {counts_after.tolist()}")
+
+    return new_subset
+
+
+def random_take_first_k(dataset_or_subset, k, seed=12345, name="set"):
+    """
+    从集合里随机取 k 个（可复现），避免“取前 k 个”导致分布偏。
+    """
+    from torch.utils.data import Subset
+    n = len(dataset_or_subset)
+    if k <= 0 or k >= n:
+        print(f"[INFO] {name}: max-events not applied (k={k}, n={n}).")
+        return dataset_or_subset
+
+    rng = np.random.default_rng(seed + 999)
+    idx = rng.choice(np.arange(n), size=k, replace=False)
+    idx = idx.tolist()
+    print(f"[INFO] {name}: randomly take {k}/{n} events.")
+    return Subset(dataset_or_subset, idx)
+
+
+# ===================== [NEW] 新增：画 score 分布 =====================
+
+def summarize_scores(name, arr):
+    arr = np.asarray(arr, dtype=np.float64)
+    if arr.size == 0:
+        return f"{name}: empty"
+    return (f"{name}: mean={arr.mean():.4f}, median={np.median(arr):.4f}, "
+            f"p05={np.quantile(arr, 0.05):.4f}, p95={np.quantile(arr, 0.95):.4f}")
+
+
+def plot_score_distributions(labels_arr, probs_arr, logits_arr, base_prefix):
+    """
+    画两类的 score 分布：
+      - p(B) = probs[:,1]
+      - s = logit_B - logit_D
+
+    labels_arr: (M,) 0=D, 1=B
+    probs_arr : (M,2)
+    logits_arr: (M,2)
+    """
+    y = labels_arr.astype(np.int64)
+    isB = (y == 1)
+    isD = (y == 0)
+
+    pB = probs_arr[:, 1].astype(np.float64)
+    s  = (logits_arr[:, 1] - logits_arr[:, 0]).astype(np.float64)
+
+    print("[INFO] Score summary (ALL):")
+    print("  " + summarize_scores("p(B) | True B", pB[isB]))
+    print("  " + summarize_scores("p(B) | True D", pB[isD]))
+    print("  " + summarize_scores("s=logitB-logitD | True B", s[isB]))
+    print("  " + summarize_scores("s=logitB-logitD | True D", s[isD]))
+
+    # --- p(B) histogram ---
+    out_pB = base_prefix + "_score_pB_all.png"
+    plt.figure(figsize=(5, 4))
+    plt.hist(pB[isB], bins=60, density=True, histtype="step", label="True B")
+    plt.hist(pB[isD], bins=60, density=True, histtype="step", label="True D")
+    plt.xlabel("p(B)")
+    plt.ylabel("Density")
+    plt.title("Score distribution: p(B) (ALL)")
+    plt.grid(True)
+    plt.legend(loc="best")
+    plt.tight_layout()
+    plt.savefig(out_pB, dpi=150)
+    plt.close()
+    print(f"[INFO] Score distribution saved to: {out_pB}")
+
+    # --- logit diff histogram ---
+    out_s = base_prefix + "_score_logitdiff_all.png"
+    plt.figure(figsize=(5, 4))
+    plt.hist(s[isB], bins=60, density=True, histtype="step", label="True B")
+    plt.hist(s[isD], bins=60, density=True, histtype="step", label="True D")
+    plt.xlabel("s = logit_B - logit_D")
+    plt.ylabel("Density")
+    plt.title("Score distribution: logit diff (ALL)")
+    plt.grid(True)
+    plt.legend(loc="best")
+    plt.tight_layout()
+    plt.savefig(out_s, dpi=150)
+    plt.close()
+    print(f"[INFO] Score distribution saved to: {out_s}")
+
+
+# ===================== main =====================
 @torch.no_grad()
 def main():
     args = parse_args()
@@ -157,23 +338,42 @@ def main():
 
     # ========= 1. 准备数据 =========
     print(f"[INFO] Loading dataset from: {args.root_file}")
-    dataset = HFSemiClassifier(args.root_file, tree_name="tree", use_log_pt=True, pt_min=3.0, pt_max=5.0)
+    dataset = HFSemiClassifier(args.root_file, tree_name="tree", use_log_pt=True, pt_min=6.0, pt_max=8.0)
 
-    n_total = len(dataset)
-    n_val = int(n_total * args.val_frac)
-    n_train = n_total - n_val
-    _, val_set = torch.utils.data.random_split(dataset, [n_train, n_val])
+    # [MOD] 在 dataset（或其裁剪子集）上做解释/评估
+    counts_all = count_classes(dataset, num_classes=2)
+    nD_all, nB_all = int(counts_all[0]), int(counts_all[1])
+    print(f"[INFO] Total samples in dataset: {len(dataset)}; D(0)={nD_all}, B(1)={nB_all}")
 
-    if args.max_events > 0 and args.max_events < len(val_set):
-        from torch.utils.data import Subset
-        indices = list(range(args.max_events))
-        val_set = Subset(val_set, indices)
-        print(f"[INFO] Using only first {args.max_events} events from val_set")
+    # [MOD] 决定保留数量
+    keep_D = args.keep_D
+    keep_B = args.keep_B
+
+    # 如果启用 balance 但没有显式给 keep，则自动平衡到 min(nD, nB)
+    if args.balance and (keep_D <= 0 and keep_B <= 0):
+        k = min(nD_all, nB_all)
+        keep_D = k
+        keep_B = k
+        print(f"[INFO] balance enabled: set keep_D=keep_B={k}")
+
+    n_keep = {0: keep_D, 1: keep_B}
+
+    work_set = downsample_by_class(
+        dataset,
+        n_keep_dict=n_keep,
+        num_classes=2,
+        seed=args.seed,
+        name="dataset"
+    )
+
+    # [MOD] 可选：再做一个全局 max-events（随机取），用于快速跑
+    if args.max_events > 0:
+        work_set = random_take_first_k(work_set, args.max_events, seed=args.seed, name="work_set")
     else:
-        print(f"[INFO] Using full val_set of size {len(val_set)}")
+        print(f"[INFO] Using full work_set of size {len(work_set)}")
 
     val_loader = DataLoader(
-        val_set,
+        work_set,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=0,
@@ -190,21 +390,23 @@ def main():
         set_embed_dim=128,
         clf_hidden_dims=(128, 128, 128),
         n_classes=2,
-        use_ele_in_had_encoder=False,
-        pooling="attn_mean",  # 和你训练时保持一致
+        use_ele_in_had_encoder=False,   # [NEW] 和你训练脚本保持一致
+        use_ele_feat=True,             # [NEW] 和你训练脚本保持一致
+        pooling="sum",           # 和你训练时保持一致
     ).to(device)
 
     ckpt = torch.load(args.ckpt, map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
-    # ========= 3. 跑一遍 val_loader，收集 attention =========
+    # ========= 3. 跑一遍 loader，收集 attention =========
     all_labels = []
     all_ele_feat = []
     all_had_feat = []   # 每个元素 shape: (B, N_batch, 5)
     all_had_mask = []   # 每个元素 shape: (B, N_batch)
     all_attn = []       # 每个元素 shape: (B, N_batch)
     all_probs = []
+    all_logits = []     # [NEW] 保存 logits 用来画 logitdiff
 
     for batch in val_loader:
         ele = batch["ele_feat"].to(device)   # (B, 3)
@@ -212,8 +414,32 @@ def main():
         mask = batch["had_mask"].to(device)  # (B, N_batch)
         labels = batch["label"].to(device)   # (B,)
 
-        logits, alpha = model(ele, had, mask, return_attn=True)  # alpha: (B, N_batch)
-        probs = torch.softmax(logits, dim=-1)  # (B, 2)
+        # 对于 sum pooling：alpha 可能为 None
+        out = model(ele, had, mask, return_attn=True)
+        if isinstance(out, (tuple, list)) and len(out) == 2:
+            logits, alpha = out
+        else:
+            logits, alpha = out, None
+
+        probs = torch.softmax(logits, dim=-1)
+
+        all_labels.append(labels.cpu().numpy())
+        all_ele_feat.append(ele.cpu().numpy())
+        all_had_feat.append(had.cpu().numpy())
+        all_had_mask.append(mask.cpu().numpy())
+
+        if alpha is None:
+            # 占位：用“均匀权重”或全零都可以。均匀更直观。
+            # mask: True 为有效 hadron
+            B, N = mask.shape
+            alpha = torch.zeros((B, N), device=mask.device, dtype=torch.float32)
+            denom = mask.float().sum(dim=1, keepdim=True).clamp(min=1.0)
+            alpha = mask.float() / denom  # 每个 event 的有效 hadron 均匀分配
+        all_attn.append(alpha.cpu().numpy())
+
+        all_probs.append(probs.cpu().numpy())
+        all_logits.append(logits.cpu().numpy())
+
 
         all_labels.append(labels.cpu().numpy())
         all_ele_feat.append(ele.cpu().numpy())
@@ -221,11 +447,13 @@ def main():
         all_had_mask.append(mask.cpu().numpy())
         all_attn.append(alpha.cpu().numpy())
         all_probs.append(probs.cpu().numpy())
+        all_logits.append(logits.cpu().numpy())   # [NEW]
 
     # ========= 4. 把 batch 列表合并成统一大小的数组 =========
     labels_arr = np.concatenate(all_labels, axis=0)        # (M,)
     ele_feat_arr = np.concatenate(all_ele_feat, axis=0)    # (M, 3)
     probs_arr = np.concatenate(all_probs, axis=0)          # (M, 2)
+    logits_arr = np.concatenate(all_logits, axis=0)        # [NEW] (M, 2)
 
     # 不同 batch 的 N_batch 可能不一样，在这里 pad 到全局 max_N
     max_N = max(arr.shape[1] for arr in all_had_feat)
@@ -247,6 +475,12 @@ def main():
     print(f"[INFO] Collected attention for {labels_arr.shape[0]} events.")
     print(f"[INFO] had_feat_arr shape = {had_feat_arr.shape}, attn_arr shape = {attn_arr.shape}")
 
+    base_prefix = os.path.splitext(args.out)[0]
+
+    # ========= [NEW] 4.2 画网络输出分布（True D vs True B） =========
+    print("[INFO] Plotting score distributions (p(B) and logit diff) for True D/B ...")
+    plot_score_distributions(labels_arr, probs_arr, logits_arr, base_prefix)
+
     # ========= 4.5 计算 ROC & AUC（全体 e）并画图 =========
     # 约定：label=1 表示 B，是“正类”
     print("[INFO] Computing ROC curve and AUC for ALL electrons (B vs D, B=positive)...")
@@ -256,8 +490,6 @@ def main():
 
     fpr, tpr, thresholds, auc_value = compute_roc_auc(y_true, y_score)
     print(f"[RESULT] AUC_all (B vs D) = {auc_value:.4f}")
-
-    base_prefix = os.path.splitext(args.out)[0]
 
     # 全体 ROC
     roc_out = base_prefix + "_roc_all.png"
@@ -519,6 +751,7 @@ def main():
         had_mask=had_mask_arr,
         attn=attn_arr,
         probs=probs_arr,
+        logits=logits_arr,   # [NEW] 也存一下 logits，方便你后面做更多诊断
     )
     print(f"[INFO] Saved attention dump to: {args.out}")
 

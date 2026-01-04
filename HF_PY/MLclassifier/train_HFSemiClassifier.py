@@ -85,13 +85,13 @@ def parse_args():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=100,
+        default=200,
         help="训练轮数",
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=1e-4,
+        default=5e-5,
         help="学习率",
     )
     parser.add_argument(
@@ -115,7 +115,7 @@ def parse_args():
     parser.add_argument(
         "--fair-lambda",
         type=float,
-        default=0.0,
+        default=1.0,
         help="平衡两类之间loss差异的正则强度",
     )
     parser.add_argument(
@@ -249,6 +249,7 @@ def main():
         # ],
         had_pt_min=0.2,    # 举例：只用 pt > 0.5 GeV 的 hadron
         had_pt_max=None,
+        min_had=10, # 每个 electron 最少要有这么多 hadron 才保留
     )
 
     n_total = len(dataset) # number of total electrons
@@ -262,12 +263,12 @@ def main():
     # 你可以在这里直接改这些数字：
     # 比如 train 想要 D/B 各 10000, val 想要 D/B 各 3000
     n_keep_train = {
-        0: 45000,   # label 0 (D)，<=0 或 None 表示“不裁剪，全部保留”
-        1: 45000,   # label 1 (B)
+        0: 35000,   # label 0 (D)，<=0 或 None 表示“不裁剪，全部保留”
+        1: 35000,   # label 1 (B)
     }
     n_keep_val = {
-        0: 15000,
-        1: 15000,
+        0: 10000,
+        1: 10000,
     }
 
     # 对 train_set 裁剪
@@ -322,7 +323,7 @@ def main():
     had_hidden_dims = (128, 128, 128)
     clf_hidden_dims = (128, 128, 128)
     set_embed_dim   = 128
-    pooling         = "attn_mean"
+    pooling         = "sum"  # "mean", "sum", "attn_mean"
 
     model = DeepSetsHF(
         had_input_dim=5,
@@ -555,8 +556,8 @@ def main():
             clf_arch_str = f"clf{len(clf_hidden_dims)}x{clf_hidden_dims[0]}"
             arch_str = f"{had_arch_str}_{clf_arch_str}_{pooling}"
 
-            # 拼到文件名里 near sides away sides
-            best_name = f"DeepSetsHF_best_ALL_{pt_min_str}-{pt_max_str}_{arch_str}_woW.pt"
+            # 拼到文件名里 near sides away sides, F=0.2
+            best_name = f"DeepSetsHF_best_5FALL_{pt_min_str}-{pt_max_str}_{arch_str}_M10.pt"
             best_path = os.path.join(args.out_dir, best_name)
 
             torch.save(
@@ -586,7 +587,7 @@ def main():
     plt.legend()
     plt.grid(True)
 
-    loss_fig_path = os.path.join(args.out_dir, f"loss_curve_ALL_pt{args.pt_min}-{args.pt_max}_woW.png")
+    loss_fig_path = os.path.join(args.out_dir, f"loss_curve_FFALL_pt{args.pt_min}-{args.pt_max}_woW.png")
     plt.savefig(loss_fig_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"[INFO] Loss curve saved to: {loss_fig_path}")

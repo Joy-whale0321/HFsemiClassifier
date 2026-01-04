@@ -32,6 +32,7 @@ void AnaHFdata(
     std::vector<float>* ele_nCh_away = nullptr;
     std::vector<float>* ele_pt = nullptr;
 
+    std::vector<int>* had_fromEle = nullptr;
     std::vector<float>* had_pt = nullptr;
     std::vector<float>* had_phi = nullptr;
     std::vector<float>* had_eta = nullptr;
@@ -41,6 +42,7 @@ void AnaHFdata(
     PYtree->SetBranchAddress("ele_nCh_away", &ele_nCh_away);
     PYtree->SetBranchAddress("ele_pt", &ele_pt);
 
+    PYtree->SetBranchAddress("had_fromEle", &had_fromEle);
     PYtree->SetBranchAddress("had_pt", &had_pt);
     PYtree->SetBranchAddress("had_phi", &had_phi);
     PYtree->SetBranchAddress("had_eta", &had_eta);
@@ -55,6 +57,9 @@ void AnaHFdata(
 
     TH1D* h1_De_pt = new TH1D("h1_De_pt", "", 100, 0, 10);
     TH1D* h1_Be_pt = new TH1D("h1_Be_pt", "", 100, 0, 10);
+
+    TH1D* h1_had_fromEle = new TH1D("h1_had_fromEle", "", 6, -0.5, 5.5);
+
 
     int    nbinsX = 80;
     double xMin   = -4.0;
@@ -91,6 +96,13 @@ void AnaHFdata(
         {
             if (size_e > 1) cout<<"Event "<<ievt<<" has "<<size_e<<" electrons."<<endl;  
             // continue;
+        }
+
+        int size_h = had_fromEle->size();
+        for(int i=0; i<size_h; ++i)
+        {
+            int had_fromEle_val = had_fromEle->at(i);
+            h1_had_fromEle->Fill(had_fromEle_val);
         }
 
         for(int i=0; i<1; ++i)
@@ -182,6 +194,7 @@ void AnaHFdata(
     h1_Be_pt->Write();
     fDe->Write();
     fBe->Write();
+    h1_had_fromEle->Write();
     fout->Close();
 
     // 关闭输入文件
