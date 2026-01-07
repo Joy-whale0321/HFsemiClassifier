@@ -342,7 +342,7 @@ int main(int argc, char* argv[])
     const double dphiWindow = M_PI; // Δφ between hadron and electron window
     const double etaMaxHad  = 1.0;  // hadron acceptance |η| < 1.0
     const double etaMaxEle  = 1.0;  // electron acceptance |η| < 1.0
-    const double ptMinEle   = 3.0;  // electron minimum pT > 3 GeV/c
+    const double ptMinEle   = 1.0;  // electron minimum pT > 3 GeV/c
 
     // ========== event loop ==========
     for (int iEvent = 0; iEvent < nEvent; ++iEvent)
@@ -392,11 +392,11 @@ int main(int argc, char* argv[])
             float hPt      = 0.0f;
             bool  semi     = tagHFSemiLeptonicElectron(ev, i, flavor, hPdg, hPt);
 
-            // if (!semi) {
-            //     // 如果你想保留所有电子，可以把这句注释掉，
-            //     // 然后 push_back 时仍然记录 flavor 和 semi 标记
-            //     continue;
-            // }
+            if (!semi) {
+                // 如果你想保留所有电子，可以把这句注释掉，
+                // 然后 push_back 时仍然记录 flavor 和 semi 标记
+                continue;
+            }
 
             // 记录这个电子的信息
             int eleIndex = ele_pt.size(); // 电子的 index，size随着e的一次push back + 1
