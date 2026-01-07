@@ -7,7 +7,7 @@
 #include <iostream>
 
 void AnaHFdata(
-    const char* infile  = "/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_1.root",
+    const char* infile  = "/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_1_0105.root",
     const char* treename = "tree")
 {
     // 打开文件
@@ -111,7 +111,7 @@ void AnaHFdata(
             int multi = ele_nCh_away->at(i);
             double ele_pt_val = ele_pt->at(i);
 
-            if (tag==1 && multi>0)
+            if (tag==3 && multi>0)
             {
                 h1_D_multi->Fill(multi);
                 h1_De_pt->Fill(ele_pt_val);
@@ -141,21 +141,21 @@ void AnaHFdata(
 
     // Fit to get weights
     // 对 D-electron pt 拟合
-    TF1* fDe = new TF1("fDe", "expo", 3, 6);  // expo: exp(p0 + p1*x)
-    h1_De_pt->Fit(fDe, "R");                   // R: 只在 [0,10] 内拟合
+    // TF1* fDe = new TF1("fDe", "expo", 3, 6);  // expo: exp(p0 + p1*x)
+    // h1_De_pt->Fit(fDe, "R");                   // R: 只在 [0,10] 内拟合
 
-    // 对 B-electron pt 拟合
-    TF1* fBe = new TF1("fBe", "expo", 3, 6);
-    h1_Be_pt->Fit(fBe, "R");
+    // // 对 B-electron pt 拟合
+    // TF1* fBe = new TF1("fBe", "expo", 3, 6);
+    // h1_Be_pt->Fit(fBe, "R");
 
-    // 拿到参数
-    double ADe = fDe->GetParameter(0); // ln 部分的常数项
-    double BDe = fDe->GetParameter(1); // ln 部分的斜率
-    double ABe = fBe->GetParameter(0);
-    double BBe = fBe->GetParameter(1);
+    // // 拿到参数
+    // double ADe = fDe->GetParameter(0); // ln 部分的常数项
+    // double BDe = fDe->GetParameter(1); // ln 部分的斜率
+    // double ABe = fBe->GetParameter(0);
+    // double BBe = fBe->GetParameter(1);
 
-    std::cout << "D: ln p ~ " << ADe << " + " << BDe << " * pt" << std::endl;
-    std::cout << "B: ln p ~ " << ABe << " + " << BBe << " * pt" << std::endl;
+    // std::cout << "D: ln p ~ " << ADe << " + " << BDe << " * pt" << std::endl;
+    // std::cout << "B: ln p ~ " << ABe << " + " << BBe << " * pt" << std::endl;
 
     // poly func
     // double fitMin = 3.0;  // 你自己看分布，从这个pt开始拟合
@@ -192,8 +192,8 @@ void AnaHFdata(
     h1_B_pt->Write();
     h1_De_pt->Write();
     h1_Be_pt->Write();
-    fDe->Write();
-    fBe->Write();
+    // fDe->Write();
+    // fBe->Write();
     h1_had_fromEle->Write();
     fout->Close();
 

@@ -384,7 +384,7 @@ int main(int argc, char* argv[])
             double phi = p.phi();
 
             if (pt < ptMinEle)        continue;
-            if (std::abs(eta) > etaMaxEle) continue;
+            // if (std::abs(eta) > etaMaxEle) continue;
 
             // 判断是否为 D/B -> e ν X 半轻衰变产生的电子
             int   flavor   = 0;
@@ -424,14 +424,14 @@ int main(int argc, char* argv[])
 
                 // eta cut for hadrons
                 double etaH = h.eta();
-                if (std::abs(etaH) > etaMaxHad) continue;
+                // if (std::abs(etaH) > etaMaxHad) continue;
 
                 double phiH = h.phi();
                 double dphi = deltaPhi(phiH, phi); // hadron φ - electron φ
                 double dphiToPi = std::abs(std::abs(dphi) - M_PI);
 
-                if (dphiToPi < dphiWindow)
-                {
+                // if (dphiToPi < dphiWindow) 
+                // {
                     multAllH++; // multi
                     sumPtAllH += h.pT(); // all hadron pt to eval hard scattering pT
 
@@ -441,7 +441,7 @@ int main(int argc, char* argv[])
                     had_pt     .push_back( h.pT() );
                     had_eta    .push_back( h.eta() - eta ); // 相对电子的 Δη
                     had_phi    .push_back( dphi ); // 相对电子的 Δφ
-                }
+                // }
             }
 
             ele_nCh_away  .push_back( multAllH );

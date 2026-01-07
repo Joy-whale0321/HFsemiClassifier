@@ -73,7 +73,7 @@ def parse_args():
     parser.add_argument(
         "--root-file",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_1.root",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_1_0105.root",
         help="Pythia 生成的 ROOT 文件路径",
     )
     parser.add_argument(
@@ -85,13 +85,13 @@ def parse_args():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=200,
+        default=100,
         help="训练轮数",
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=5e-5,
+        default=1e-4,
         help="学习率",
     )
     parser.add_argument(
@@ -121,13 +121,13 @@ def parse_args():
     parser.add_argument(
         "--pt-min",
         type=float,
-        default=3.0,
+        default=5.0,
         help="electron minimum pt",
     )
     parser.add_argument(
         "--pt-max",
         type=float,
-        default=3.1,
+        default=8.0,
         help="electron maximum pt",
     )
     # early stopping patience
@@ -241,7 +241,7 @@ def main():
         pt_min=args.pt_min,
         pt_max=args.pt_max,
         eta_abs_max=1.0,
-        use_had_eta=True,
+        use_had_eta=False,
         # dphi_windows=[
         #     (-1., 1.),     # 近端 |Δφ| < 0.5
         #     (-pi, -2.1),     # 远端左边 |Δφ| > 2.6
@@ -249,7 +249,7 @@ def main():
         # ],
         had_pt_min=0.2,    # 举例：只用 pt > 0.5 GeV 的 hadron
         had_pt_max=None,
-        min_had=10, # 每个 electron 最少要有这么多 hadron 才保留
+        min_had=0, # 每个 electron 最少要有这么多 hadron 才保留
     )
 
     n_total = len(dataset) # number of total electrons
@@ -263,12 +263,12 @@ def main():
     # 你可以在这里直接改这些数字：
     # 比如 train 想要 D/B 各 10000, val 想要 D/B 各 3000
     n_keep_train = {
-        0: 35000,   # label 0 (D)，<=0 或 None 表示“不裁剪，全部保留”
-        1: 35000,   # label 1 (B)
+        0: 15000,   # label 0 (D)，<=0 或 None 表示“不裁剪，全部保留”
+        1: 15000,   # label 1 (B)
     }
     n_keep_val = {
-        0: 10000,
-        1: 10000,
+        0: 5000,
+        1: 5000,
     }
 
     # 对 train_set 裁剪
@@ -332,7 +332,7 @@ def main():
         set_embed_dim=set_embed_dim,
         clf_hidden_dims=clf_hidden_dims,
         n_classes=2,
-        use_ele_in_had_encoder=False,
+        use_ele_in_had_encoder=True,
         use_ele_feat=True,
         pooling=pooling,
     ).to(device)
@@ -587,7 +587,7 @@ def main():
     plt.legend()
     plt.grid(True)
 
-    loss_fig_path = os.path.join(args.out_dir, f"loss_curve_FFALL_pt{args.pt_min}-{args.pt_max}_woW.png")
+    loss_fig_path = os.path.join(args.out_dir, f"loss_curve_5FALL_pt{args.pt_min}-{args.pt_max}_woW.png")
     plt.savefig(loss_fig_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"[INFO] Loss curve saved to: {loss_fig_path}")

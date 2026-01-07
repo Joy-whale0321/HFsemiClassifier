@@ -33,13 +33,13 @@ def parse_args():
     parser.add_argument(
         "--root-file",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_2.root",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_2_0105.root",
         help="Pythia 生成的 ROOT 文件路径（和训练时一致）",
     )
     parser.add_argument(
         "--ckpt",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/MLclassifier/Weight_of_Model/DeepSetsHF_best_5FALL_3.0-3.1_had3x128_clf3x128_sum_M10.pt",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/MLclassifier/Weight_of_Model/DeepSetsHF_best_5FALL_5.0-8.0_had3x128_clf3x128_sum_M10.pt",
         help="训练时保存的最优模型 checkpoint 路径",
     )
     parser.add_argument(
@@ -338,7 +338,7 @@ def main():
 
     # ========= 1. 准备数据 =========
     print(f"[INFO] Loading dataset from: {args.root_file}")
-    dataset = HFSemiClassifier(args.root_file, tree_name="tree", use_log_pt=True, pt_min=6.0, pt_max=8.0)
+    dataset = HFSemiClassifier(args.root_file, tree_name="tree", use_log_pt=True, pt_min=5.0, pt_max=8.0)
 
     # [MOD] 在 dataset（或其裁剪子集）上做解释/评估
     counts_all = count_classes(dataset, num_classes=2)
@@ -390,7 +390,7 @@ def main():
         set_embed_dim=128,
         clf_hidden_dims=(128, 128, 128),
         n_classes=2,
-        use_ele_in_had_encoder=False,   # [NEW] 和你训练脚本保持一致
+        use_ele_in_had_encoder=True,   # [NEW] 和你训练脚本保持一致
         use_ele_feat=True,             # [NEW] 和你训练脚本保持一致
         pooling="sum",           # 和你训练时保持一致
     ).to(device)
