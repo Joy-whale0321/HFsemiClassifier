@@ -342,7 +342,7 @@ int main(int argc, char* argv[])
     const double dphiWindow = M_PI; // Δφ between hadron and electron window
     const double etaMaxHad  = 1.0;  // hadron acceptance |η| < 1.0
     const double etaMaxEle  = 1.0;  // electron acceptance |η| < 1.0
-    const double ptMinEle   = 1.0;  // electron minimum pT > 3 GeV/c
+    const double ptMinEle   = 0.0;  // electron minimum pT > 3 GeV/c
 
     // ========== event loop ==========
     for (int iEvent = 0; iEvent < nEvent; ++iEvent)

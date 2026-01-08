@@ -43,7 +43,7 @@ Initialdir     = /sphenix/user/jzhang1/HFsemiClassifier/HF_PY/Generate
 # The executable we want to run.
 Executable     = $(Initialdir)/run_ppHF.sh
 
-nEvents        = 1000000
+nEvents        = 10000
 PYSet          = ppHF.cmnd
 outName        = ppHF_eXDecay_1M_$(Process).root
 
