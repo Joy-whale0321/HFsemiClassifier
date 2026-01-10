@@ -7,7 +7,7 @@
 #include <iostream>
 
 void AnaHFdata(
-    const char* infile  = "/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_1_0105.root",
+    const char* infile  = "/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_tagcheck.root",
     const char* treename = "tree")
 {
     // 打开文件
@@ -76,6 +76,8 @@ void AnaHFdata(
     Long64_t nEntries = PYtree->GetEntries();
     std::cout << "Total entries: " << nEntries << std::endl;
 
+    int n_1e = 0;
+    int n_2e = 0;
     // loop over events
     for (Long64_t ievt = 0; ievt < nEntries; ++ievt)
     {
@@ -94,8 +96,12 @@ void AnaHFdata(
 
         int size_e = ele_hf_TAG->size();
         {
-            if (size_e > 1) cout<<"Event "<<ievt<<" has "<<size_e<<" electrons."<<endl;  
-            // continue;
+            if (size_e > 1) {
+                cout<<"Event "<<ievt<<" has "<<size_e<<" electrons."<<endl;  
+                n_2e +=1;
+                // continue;
+            }
+            n_1e +=1;
         }
 
         int size_h = had_fromEle->size();
@@ -111,7 +117,7 @@ void AnaHFdata(
             int multi = ele_nCh_away->at(i);
             double ele_pt_val = ele_pt->at(i);
 
-            if (tag==3 && multi>0)
+            if (tag==1 && multi>0)
             {
                 h1_D_multi->Fill(multi);
                 h1_De_pt->Fill(ele_pt_val);
@@ -123,7 +129,7 @@ void AnaHFdata(
                     h1_D_pt->Fill(had_pt_val);
                 }
             }
-            else if(tag==2 && multi>0)
+            else if(tag==3 && multi>0)
             {
                 h1_B_multi->Fill(multi);
                 h1_Be_pt->Fill(ele_pt_val);
@@ -138,6 +144,8 @@ void AnaHFdata(
         }
 
     }
+    cout<<"n_1e is "<<n_1e<<endl;
+    cout<<"n_2e is "<<n_2e<<endl;
 
     // Fit to get weights
     // 对 D-electron pt 拟合

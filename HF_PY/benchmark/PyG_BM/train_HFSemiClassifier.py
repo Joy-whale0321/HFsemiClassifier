@@ -5,6 +5,7 @@ import os
 import argparse
 import time
 import matplotlib.pyplot as plt
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -13,44 +14,12 @@ from torch.utils.data import DataLoader, random_split
 from data_HFSemiClassifier import HFSemiClassifier, hf_semi_collate
 from model_HFSemiClassifier import DeepSetsHF
 
-
-# ==========================================================
-#  根据 electron 的 pt 做 expo 拟合权重（你原代码保留）
-A_D, B_D = 15.1744, -1.91749
-A_B, B_B = 12.1074, -1.10499
-W_MAX = 5.0
-
-
-def get_pt_weight_from_logpt(pt_log: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    pt = torch.exp(pt_log)
-    w_D = torch.ones_like(pt)
-    w_B = torch.ones_like(pt)
-
-    mask_low = (pt >= 3.0) & (pt < 6.0)
-    if mask_low.any():
-        pt_low = pt[mask_low]
-        logc_D = torch.clamp(A_D + B_D * pt_low, min=-50.0, max=50.0)
-        logc_B = torch.clamp(A_B + B_B * pt_low, min=-50.0, max=50.0)
-        logc_max = torch.maximum(logc_D, logc_B)
-        w_D[mask_low] = torch.exp(logc_max - logc_D)
-        w_B[mask_low] = torch.exp(logc_max - logc_B)
-
-    mask_high = (pt >= 6.0) & (pt < 10.0)
-    if mask_high.any():
-        w_D[mask_high] = 3.0
-        w_B[mask_high] = 1.0
-
-    weights = torch.where(labels == 0, w_D, w_B)
-    weights = torch.clamp(weights, max=W_MAX)
-    return weights
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Train HF semi-leptonic electron classifier (Deep Sets / PyG pooling).")
     parser.add_argument(
         "--root-file",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_1_0105.root",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_1_allAccept.root",
         help="Pythia 生成的 ROOT 文件路径",
     )
     parser.add_argument("--batch-size", type=int, default=512, help="batch size")
@@ -60,14 +29,18 @@ def parse_args():
     parser.add_argument(
         "--out-dir",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/MLclassifier/Weight_of_Model",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model",
         help="模型权重输出目录",
     )
     parser.add_argument("--val-frac", type=float, default=0.25, help="验证集占比")
-    parser.add_argument("--fair-lambda", type=float, default=1.0, help="平衡两类之间loss差异的正则强度")
-    parser.add_argument("--pt-min", type=float, default=5.0, help="electron minimum pt")
-    parser.add_argument("--pt-max", type=float, default=8.0, help="electron maximum pt")
+    parser.add_argument("--fair-lambda", type=float, default=0.0, help="平衡两类之间loss差异的正则强度")
+    parser.add_argument("--pt-min", type=float, default=3.0, help="electron minimum pt")
+    parser.add_argument("--pt-max", type=float, default=10.0, help="electron maximum pt")
     parser.add_argument("--patience", type=int, default=30, help="early stopping patience")
+    parser.add_argument("--ds-pt-bin-width", type=float, default=0.5,
+                    help="downsample用的e pT分bin宽度(GeV)，例如1.0表示3-4-5-...")
+    parser.add_argument("--ds-pt-edges", type=str, default="",
+                        help="可选：手动指定downsample的pt边界，如 '3,4,5,6,8'；若非空则覆盖bin-width方案")
 
     # ======= NEW: benchmark switch =======
     parser.add_argument(
@@ -80,7 +53,6 @@ def parse_args():
 
     return parser.parse_args()
 
-
 def count_classes(dataset, num_classes=2):
     counts = torch.zeros(num_classes, dtype=torch.long)
     for i in range(len(dataset)):
@@ -89,55 +61,108 @@ def count_classes(dataset, num_classes=2):
             counts[y] += 1
     return counts
 
+# ================= 下采样 =================
+# def pt pin edges 解析
+def parse_pt_edges(args):
+    # 先看pt edges def，去掉字符串首尾的空格
+    if args.ds_pt_edges.strip(): 
+        edges = [float(x) for x in args.ds_pt_edges.split(",")]
+        edges = sorted(edges)
+        if len(edges) < 2:
+            raise ValueError("ds-pt-edges must have >=2 numbers")
+        return np.array(edges, dtype=np.float32)
 
-def downsample_by_class(subset, n_keep_dict, num_classes=2, name="set"):
-    from torch.utils.data import Subset
+    # without pt edges def，用 bin width 自动生成：覆盖 [pt_min, pt_max]
+    if args.pt_min is None or args.pt_max is None:
+        raise ValueError("Need --pt-min and --pt-max to auto-build ds pt bins")
 
-    counts_before = count_classes(subset, num_classes=num_classes)
-    print(f"[INFO] {name}: before downsample, class counts (0..{num_classes-1}) = {counts_before.tolist()}")
+    w = float(args.ds_pt_bin_width)
+    if w <= 0:
+        raise ValueError("--ds-pt-bin-width must be > 0")
 
-    if not n_keep_dict or all((v is None or v <= 0) for v in n_keep_dict.values()):
-        print(f"[INFO] {name}: n_keep_dict empty or all <=0, skip downsample.")
-        return subset
+    # edges: pt_min, pt_min+w, ..., >=pt_max
+    edges = [float(args.pt_min)]
+    x = float(args.pt_min)
+    while x + w < float(args.pt_max) - 1e-6:
+        x += w
+        edges.append(x)
+    edges.append(float(args.pt_max))
+    return np.array(edges, dtype=np.float32)
 
-    idx_per_class = {c: [] for c in range(num_classes)}
-    idx_rest = []
+# 用 subset-local index, 映射回 dataset-global index, for取真实 pt
+def subset_local_to_global_dataset_idx(subset, i_local):
+    # random_split 返回的是 torch.utils.data.Subset
+    # subset.indices 是“dataset全局idx”的列表
+    return int(subset.indices[i_local])
 
-    for i in range(len(subset)):
-        y = int(subset[i]["label"])
-        if 0 <= y < num_classes:
-            idx_per_class[y].append(i)
-        else:
-            idx_rest.append(i)
+# get electron pt from dataset, given global idx 
+def get_electron_pt_from_dataset(dataset, global_idx):
+    # dataset.electron_index[global_idx] = (evt_idx, ele_idx)
+    evt_idx, ele_idx = dataset.electron_index[global_idx]
+    return float(dataset.ele_pt[evt_idx][ele_idx])
 
-    selected_indices = []
-    for c in range(num_classes):
-        idx_list = idx_per_class[c]
-        n_all = len(idx_list)
-        if n_all == 0:
+# 把 subset 里的每条样本，按照 (pt bin 编号 b, 类别 y) 分bin，最后返回一个“bin → 样本列表”的字典。
+def build_ptbin_class_index(subset, dataset, pt_edges, num_classes=2):
+    """
+    返回：
+      idx_map[(b, c)] = [subset-local idx...]
+    其中 b 是 pt bin 编号：0..(n_bins-1)
+    """
+    n_bins = len(pt_edges) - 1
+    idx_map = {(b, c): [] for b in range(n_bins) for c in range(num_classes)}
+
+    for i_local in range(len(subset)):
+        y = int(subset[i_local]["label"])
+        if not (0 <= y < num_classes):
             continue
 
-        n_keep = n_keep_dict.get(c, None)
-        if (n_keep is None) or (n_keep <= 0) or (n_keep >= n_all):
-            selected_indices.extend(idx_list)
-        else:
-            idx_tensor = torch.tensor(idx_list, dtype=torch.long)
-            perm = torch.randperm(n_all)
-            chosen = idx_tensor[perm[:n_keep]].tolist()
-            selected_indices.extend(chosen)
+        gidx = subset_local_to_global_dataset_idx(subset, i_local)
+        pt = get_electron_pt_from_dataset(dataset, gidx)
 
-    selected_indices.extend(idx_rest)
+        # 找 pt 属于哪个 bin：[edge[b], edge[b+1])
+        b = int(np.searchsorted(pt_edges, pt, side="right") - 1)
+        if 0 <= b < n_bins:
+            idx_map[(b, y)].append(i_local)
 
-    selected_indices = torch.tensor(selected_indices, dtype=torch.long)
-    perm_all = torch.randperm(len(selected_indices))
-    selected_indices = selected_indices[perm_all].tolist()
+    return idx_map
 
-    new_subset = Subset(subset, selected_indices)
+# 在每个 pt bin 内，按 min(nD, nB) 随机抽样，并把所有 bin 拼起来
+def resample_balanced_by_ptbin(subset, idx_map, pt_edges, generator=None, num_classes=2):
+    """
+    每个 epoch 调一次：
+      对每个 pt bin：
+        取 n_keep = min(nD, nB)
+        从D、B各自随机抽 n_keep（不放回）
+      然后把所有 bin 拼起来并打乱
+    """
+    from torch.utils.data import Subset
 
-    counts_after = count_classes(new_subset, num_classes=num_classes)
-    print(f"[INFO] {name}: after  downsample, class counts (0..{num_classes-1}) = {counts_after.tolist()}")
+    n_bins = len(pt_edges) - 1
+    selected = []
 
-    return new_subset
+    for b in range(n_bins):
+        pools = [idx_map[(b, c)] for c in range(num_classes)]
+        if any(len(p) == 0 for p in pools):
+            # 某个class在这个bin为0，无法平衡：直接跳过这个bin（更干净）
+            continue
+
+        n_keep = min(len(pools[0]), len(pools[1]))
+
+        for c in range(num_classes):
+            pool = pools[c]
+            n_all = len(pool)
+            perm = torch.randperm(n_all, generator=generator)
+            chosen = [pool[j] for j in perm[:n_keep].tolist()]
+            selected.extend(chosen)
+
+    if len(selected) == 0:
+        # 极端情况：没抽到任何（比如某些bin全空），就退化为原subset
+        return subset
+
+    perm_all = torch.randperm(len(selected), generator=generator).tolist()
+    selected = [selected[k] for k in perm_all]
+    return Subset(subset, selected)
+
 
 
 def main():
@@ -148,7 +173,7 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    print(f"[INFO] Loading dataset from: {args.root_file}")
+    print(f"[INFO] Loading dataset from: {args.root_file}")  
     dataset = HFSemiClassifier(
         args.root_file,
         tree_name="tree",
@@ -159,7 +184,7 @@ def main():
         use_had_eta=False,
         had_pt_min=0.2,
         had_pt_max=None,
-        min_had=0,
+        min_had=4,
     )
 
     n_total = len(dataset)
@@ -168,34 +193,21 @@ def main():
     train_set, val_set = random_split(dataset, [n_train, n_val])
     print(f"[INFO] Total electrons: {n_total}, train: {n_train}, val: {n_val}")
 
-    # ===== 你原来的手动裁剪（保留）=====
-    n_keep_train = {0: 15000, 1: 15000}
-    n_keep_val = {0: 5000, 1: 5000}
+    # ===== 下采样用的pt bins=====
+    pt_edges = parse_pt_edges(args)
+    print(f"[INFO] Downsample pt edges: {pt_edges.tolist()}")
 
-    train_set = downsample_by_class(train_set, n_keep_dict=n_keep_train, num_classes=2, name="train")
-    val_set = downsample_by_class(val_set, n_keep_dict=n_keep_val, num_classes=2, name="val")
+    # 预先构建 (ptbin, class)->indices 映射（一次性）
+    train_idx_map = build_ptbin_class_index(train_set, dataset, pt_edges, num_classes=2)
+    val_idx_map   = build_ptbin_class_index(val_set, dataset, pt_edges, num_classes=2)
 
-    train_counts = count_classes(train_set, num_classes=2)
-    n_D = train_counts[0].item()
-    n_B = train_counts[1].item()
-    print(f"[INFO] Train class counts (after downsample): D(0) = {n_D}, B(1) = {n_B}")
+    # 打印每个bin的计数（可选但强烈建议）
+    n_bins = len(pt_edges) - 1
+    for b in range(n_bins):
+        nD = len(train_idx_map[(b,0)])
+        nB = len(train_idx_map[(b,1)])
+        print(f"[INFO] Train bin {pt_edges[b]:.2f}-{pt_edges[b+1]:.2f}: D={nD}, B={nB}, keep(each)={min(nD,nB)}")
 
-    train_loader = DataLoader(
-        train_set,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        collate_fn=hf_semi_collate,
-        pin_memory=True if device.type == "cuda" else False,
-    )
-    val_loader = DataLoader(
-        val_set,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        collate_fn=hf_semi_collate,
-        pin_memory=True if device.type == "cuda" else False,
-    )
 
     # ======= benchmark knob here =======
     pooling = args.pooling
@@ -230,6 +242,34 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
+
+        # ===== 每个epoch重新按(ptbin内)平衡下采样 =====
+        g = torch.Generator()
+        g.manual_seed(12345 + epoch)  # 或者你加个args.seed
+
+        train_epoch_set = resample_balanced_by_ptbin(
+            train_set, train_idx_map, pt_edges, generator=g, num_classes=2
+        )
+        val_epoch_set = resample_balanced_by_ptbin(
+            val_set, val_idx_map, pt_edges, generator=g, num_classes=2
+        )
+
+        train_loader = DataLoader(
+            train_epoch_set,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers,
+            collate_fn=hf_semi_collate,
+            pin_memory=True if device.type == "cuda" else False,
+        )
+        val_loader = DataLoader(
+            val_epoch_set,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            collate_fn=hf_semi_collate,
+            pin_memory=True if device.type == "cuda" else False,
+        )
 
         # ---- Train ----
         model.train()
@@ -396,7 +436,8 @@ def main():
     print("[INFO] Training finished.")
 
     # plot loss curve
-    epochs = range(1, args.epochs + 1)
+    # epochs = range(1, args.epochs + 1)
+    epochs = range(1, len(train_loss_history) + 1) # for early stopping case
     plt.figure()
     plt.plot(epochs, train_loss_history, label="train loss")
     plt.plot(epochs, val_loss_history, label="val loss")
