@@ -6,6 +6,7 @@ import argparse
 import time
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 
 import torch
 import torch.nn as nn
@@ -37,7 +38,7 @@ def parse_args():
     parser.add_argument("--pt-min", type=float, default=3.0, help="electron minimum pt")
     parser.add_argument("--pt-max", type=float, default=10.0, help="electron maximum pt")
     parser.add_argument("--patience", type=int, default=30, help="early stopping patience")
-    parser.add_argument("--ds-pt-bin-width", type=float, default=0.5,
+    parser.add_argument("--ds-pt-bin-width", type=float, default=0.25,
                     help="downsample用的e pT分bin宽度(GeV)，例如1.0表示3-4-5-...")
     parser.add_argument("--ds-pt-edges", type=str, default="",
                         help="可选：手动指定downsample的pt边界，如 '3,4,5,6,8'；若非空则覆盖bin-width方案")
@@ -147,6 +148,8 @@ def resample_balanced_by_ptbin(subset, idx_map, pt_edges, generator=None, num_cl
             continue
 
         n_keep = min(len(pools[0]), len(pools[1]))
+        # base_keep = min(len(pools[0]), len(pools[1]))
+        # n_keep = math.floor(0.1 * base_keep) # 下采样比例10%
 
         for c in range(num_classes):
             pool = pools[c]
@@ -177,11 +180,11 @@ def main():
     dataset = HFSemiClassifier(
         args.root_file,
         tree_name="tree",
-        use_log_pt=True,
+        use_log_pt=False,
         pt_min=args.pt_min,
         pt_max=args.pt_max,
-        eta_abs_max=1.0,
-        use_had_eta=False,
+        eta_abs_max=5.0,
+        use_had_eta=True,
         had_pt_min=0.2,
         had_pt_max=None,
         min_had=4,
@@ -246,6 +249,7 @@ def main():
         # ===== 每个epoch重新按(ptbin内)平衡下采样 =====
         g = torch.Generator()
         g.manual_seed(12345 + epoch)  # 或者你加个args.seed
+        # g.manual_seed(12345)  # 或者你加个args.seed
 
         train_epoch_set = resample_balanced_by_ptbin(
             train_set, train_idx_map, pt_edges, generator=g, num_classes=2
@@ -402,9 +406,9 @@ def main():
         else:
             epochs_no_improve = 0
 
-        if epochs_no_improve >= args.patience:
-            print(f"[INFO] Early stopping triggered after {args.patience} epochs with no improvement.")
-            break
+        # if epochs_no_improve >= args.patience:
+        #     print(f"[INFO] Early stopping triggered after {args.patience} epochs with no improvement.")
+        #     break
 
         # save best model
         if epoch >= start_save_epoch and avg_val_loss < best_val_loss:
