@@ -8,11 +8,11 @@ OUT0="ppHF_eXDecay_5B_1_allAccept.root"
 OUT1="ppHF_eXDecay_5B_2_allAccept.root"
 
 # 合并 0-499
-echo "Merging 0-99 -> ${OUT0}"
-hadd -f "${OUT0}" ppHF_eXDecay_10M_{0..99}.root
+echo "Merging 0-499 -> ${OUT0}"
+hadd -f "${OUT0}" ppHF_eXDecay_10M_{0..499}.root
 
 # 合并 500-999
-echo "Merging 100-199 -> ${OUT1}"
-hadd -f "${OUT1}" ppHF_eXDecay_10M_{100..199}.root
+echo "Merging 500-999 -> ${OUT1}"
+hadd -f "${OUT1}" ppHF_eXDecay_10M_{500..999}.root
 
 echo "Done."
