@@ -3,3 +3,5 @@
 *.png
 *.pt
 *.npz
+*.txt
+__pycache__/

@@ -7,7 +7,7 @@
 #include <iostream>
 
 void AnaHFdata(
-    const char* infile  = "/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_tagcheck.root",
+    const char* infile  = "/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_2_allAccept.root",
     const char* treename = "tree")
 {
     // 打开文件
