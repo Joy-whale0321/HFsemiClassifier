@@ -13,7 +13,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 
 from data_HFSemiClassifier import HFSemiClassifier, hf_semi_collate
-from model_HFSemiClassifier import DeepSetsHF, PointNetHF
+from model_HFSemiClassifier import DeepSetsHF, PointNetHF, SetTransformerHF, GNNHF_EdgeConv
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train HF semi-leptonic electron classifier (Deep Sets / PyG pooling).")
@@ -23,14 +24,14 @@ def parse_args():
         default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_1_allAccept.root",
         help="Pythia 生成的 ROOT 文件路径",
     )
-    parser.add_argument("--batch-size", type=int, default=512, help="batch size")
+    parser.add_argument("--batch-size", type=int, default=128, help="batch size")
     parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
     parser.add_argument("--lr", type=float, default=1e-4, help="学习率")
     parser.add_argument("--num-workers", type=int, default=4, help="DataLoader 的 num_workers")
     parser.add_argument(
         "--out-dir",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/pointnet",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/gnn/",
         help="模型权重输出目录",
     )
     parser.add_argument("--val-frac", type=float, default=0.25, help="验证集占比")
@@ -51,6 +52,9 @@ def parse_args():
         choices=["mean", "sum", "max", "attn", "attn_mean"],
         help="Set pooling type (benchmark knob).",
     )
+
+    parser.add_argument("--num-layers", type=int, default=4, help="number of layers in the transformer encoder")
+    parser.add_argument("--num-gnn-k", type=int, default=4, help="number of layers in the GNN kNN graph construction")
 
     return parser.parse_args()
 
@@ -231,21 +235,51 @@ def main():
     #     pooling=pooling,
     # ).to(device)
 
-    model = PointNetHF(
+    # model = PointNetHF(
+    #     had_input_dim=5,
+    #     ele_input_dim=3,
+    #     point_hidden_dims=(128, 128, 256),
+    #     point_embed_dim=256,
+    #     clf_hidden_dims=(256, 256),
+    #     n_classes=2,
+    #     use_ele_in_point_encoder=True,  # same with DeepSets setting
+    #     use_ele_feat=True,
+    #     pooling="max",                  # PointNet 最常用 max
+    # ).to(device)
+
+    # ===== Transformer baseline =====
+    # model = SetTransformerHF(
+    #     had_input_dim=5,
+    #     ele_input_dim=3,
+    #     d_model=256,
+    #     nhead=4,
+    #     num_layers=args.num_layers,        # n layer transformer encoder
+    #     dim_feedforward=512,
+    #     dropout=0.1,
+    #     n_classes=2,
+    # ).to(device)
+
+    model = GNNHF_EdgeConv(
         had_input_dim=5,
         ele_input_dim=3,
-        point_hidden_dims=(128, 128, 256),
-        point_embed_dim=256,
-        clf_hidden_dims=(256, 256),
+        hidden_dim=128,
+        num_layers=3,   # 先 3 层；可以试 2/4
+        k=args.num_gnn_k,            # 先 12；可以试 8/16
+        pooling="sum",  # "sum" 通常稳
         n_classes=2,
-        use_ele_in_point_encoder=True,  # 等价于你 DeepSets 里的 use_ele_in_had_encoder
-        use_ele_feat=True,
-        pooling="max",                  # PointNet 最常用 max；你也可试 mean/sum
+        use_ele_in_node=True,
+        pos_mode="deta_sincos",
+        dropout=0.1,
     ).to(device)
-
 
     criterion = nn.CrossEntropyLoss(reduction="none")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    # ===== LR scheduler (NEW) =====
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=args.epochs,   # 一个 cosine 周期 = 总 epoch
+        eta_min=0.1 * args.lr  # 最低 lr，不要设成 0
+    )
 
     print("[INFO] Model constructed:")
     print(model)
@@ -435,7 +469,8 @@ def main():
             arch_str = f"{had_arch_str}_{clf_arch_str}_{pooling}"
 
             # best_name = f"DeepSetsHF_best_ALL_{pt_min_str}-{pt_max_str}_{arch_str}_M4.pt"
-            best_name = f"PointnetsHF_best_ALL_{pt_min_str}-{pt_max_str}_{arch_str}_M4.pt"
+            # best_name = f"TransformerHF_best_ALL_{pt_min_str}-{pt_max_str}_layer{args.num_layers}_M4.pt"
+            best_name = f"gnnHF_best_ALL_{pt_min_str}-{pt_max_str}_k{args.num_gnn_k}.pt"
             best_path = os.path.join(args.out_dir, best_name)
 
             torch.save(
@@ -450,6 +485,9 @@ def main():
                 best_path,
             )
             print(f"[INFO] Best model updated, saved to: {best_path}")
+
+        # ===== step LR scheduler (NEW) =====
+        scheduler.step()
 
     print("[INFO] Training finished.")
 
@@ -466,7 +504,9 @@ def main():
     plt.grid(True)
 
     loss_fig_path = os.path.join(
-        args.out_dir, f"loss_curve_5FALL_pt{args.pt_min}-{args.pt_max}_pool{args.pooling}.png"
+        # args.out_dir, f"loss_curve_ALL_pt{args.pt_min}-{args.pt_max}_pool{args.pooling}.png"
+        # args.out_dir, f"loss_curve_ALL_pt{args.pt_min}-{args.pt_max}_layer{args.num_layers}.png"
+        args.out_dir, f"loss_curve_ALL_pt{args.pt_min}-{args.pt_max}_k{args.num_gnn_k}.png"
     )
     plt.savefig(loss_fig_path, dpi=150, bbox_inches="tight")
     plt.close()

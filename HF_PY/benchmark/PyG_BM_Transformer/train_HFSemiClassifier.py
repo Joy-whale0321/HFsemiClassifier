@@ -11,11 +11,9 @@ import math
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
-import torch.nn.functional as F
 
 from data_HFSemiClassifier import HFSemiClassifier, hf_semi_collate
-from model_HFSemiClassifier import DeepSetsHF, PointNetHF
-
+from model_HFSemiClassifier import DeepSetsHF, PointNetHF, SetTransformerHF
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train HF semi-leptonic electron classifier (Deep Sets / PyG pooling).")
@@ -25,14 +23,14 @@ def parse_args():
         default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_1_allAccept.root",
         help="Pythia 生成的 ROOT 文件路径",
     )
-    parser.add_argument("--batch-size", type=int, default=512, help="batch size")
+    parser.add_argument("--batch-size", type=int, default=128, help="batch size")
     parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
     parser.add_argument("--lr", type=float, default=1e-4, help="学习率")
     parser.add_argument("--num-workers", type=int, default=4, help="DataLoader 的 num_workers")
     parser.add_argument(
         "--out-dir",
         type=str,
-        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM_optimize/Weight_of_Model/deepset/",
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/pointnet",
         help="模型权重输出目录",
     )
     parser.add_argument("--val-frac", type=float, default=0.25, help="验证集占比")
@@ -53,27 +51,8 @@ def parse_args():
         choices=["mean", "sum", "max", "attn", "attn_mean"],
         help="Set pooling type (benchmark knob).",
     )
-    # optimize operating-point penalty args
-    parser.add_argument("--op-lambda", type=float, default=0.0,
-                        help="operating-point penalty strength (route2)")
-    parser.add_argument("--op-eff", type=float, default=0.40,
-                        help="target efficiency for both B and D operating points")
-    parser.add_argument("--op-tau", type=float, default=0.05,
-                        help="soft margin temperature for operating-point penalty")
-
-    # ======= NEW: Hard Negative Mining (HNM) args =======
-    parser.add_argument("--hnm-k", type=int, default=6000,
-                        help="how many hard samples per class to mine each epoch")
-    parser.add_argument("--hnm-mult", type=int, default=3,
-                        help="oversample multiplier for mined hard samples (in train)")
-    parser.add_argument("--hnm-from", type=str, default="train",
-                        choices=["train", "val"],
-                        help="mine hard samples from which set (balanced epoch set)")
-    parser.add_argument("--hnm-start-epoch", type=int, default=5,
-                        help="start HNM after this epoch (>=1)")
 
     return parser.parse_args()
-
 
 def count_classes(dataset, num_classes=2):
     counts = torch.zeros(num_classes, dtype=torch.long)
@@ -83,12 +62,11 @@ def count_classes(dataset, num_classes=2):
             counts[y] += 1
     return counts
 
-
 # ================= 下采样 =================
 # def pt pin edges 解析
 def parse_pt_edges(args):
     # 先看pt edges def，去掉字符串首尾的空格
-    if args.ds_pt_edges.strip():
+    if args.ds_pt_edges.strip(): 
         edges = [float(x) for x in args.ds_pt_edges.split(",")]
         edges = sorted(edges)
         if len(edges) < 2:
@@ -112,20 +90,17 @@ def parse_pt_edges(args):
     edges.append(float(args.pt_max))
     return np.array(edges, dtype=np.float32)
 
-
 # 用 subset-local index, 映射回 dataset-global index, for取真实 pt
 def subset_local_to_global_dataset_idx(subset, i_local):
     # random_split 返回的是 torch.utils.data.Subset
     # subset.indices 是“dataset全局idx”的列表
     return int(subset.indices[i_local])
 
-
-# get electron pt from dataset, given global idx
+# get electron pt from dataset, given global idx 
 def get_electron_pt_from_dataset(dataset, global_idx):
     # dataset.electron_index[global_idx] = (evt_idx, ele_idx)
     evt_idx, ele_idx = dataset.electron_index[global_idx]
     return float(dataset.ele_pt[evt_idx][ele_idx])
-
 
 # 把 subset 里的每条样本，按照 (pt bin 编号 b, 类别 y) 分bin，最后返回一个“bin → 样本列表”的字典。
 def build_ptbin_class_index(subset, dataset, pt_edges, num_classes=2):
@@ -151,7 +126,6 @@ def build_ptbin_class_index(subset, dataset, pt_edges, num_classes=2):
             idx_map[(b, y)].append(i_local)
 
     return idx_map
-
 
 # 在每个 pt bin 内，按 min(nD, nB) 随机抽样，并把所有 bin 拼起来
 def resample_balanced_by_ptbin(subset, idx_map, pt_edges, generator=None, num_classes=2):
@@ -193,125 +167,6 @@ def resample_balanced_by_ptbin(subset, idx_map, pt_edges, generator=None, num_cl
     return Subset(subset, selected)
 
 
-# optimze
-def op_point_penalty(pB, labels, eff=0.40, tau=0.05):
-    """
-    pB: (B,) probability of class B
-    labels: (B,) 0=D, 1=B
-    Returns:
-      penalty_B: D samples with pB > tB  (hurts purity_B at eff_B=eff)
-      penalty_D: B samples with pB < tD  (hurts purity_D at eff_D=eff)
-    """
-    maskD = (labels == 0)
-    maskB = (labels == 1)
-
-    # guard: if batch has only one class, no op penalty
-    if (not maskD.any()) or (not maskB.any()):
-        return pB.new_tensor(0.0), pB.new_tensor(0.0)
-
-    pB_D = pB[maskD]
-    pB_B = pB[maskB]
-
-    # ---- threshold for B-eff=eff: keep top-eff fraction among B ----
-    # want: fraction(pB_B > tB) = eff  -> tB = quantile at (1-eff)
-    tB = torch.quantile(pB_B, 1.0 - eff).detach()
-
-    # penalize D that would pass B cut (false positives for B selection)
-    # softplus((pB - tB)/tau) ~ max(0, pB - tB) when tau small
-    penalty_B = F.softplus((pB_D - tB) / tau).mean()
-
-    # ---- threshold for D-eff=eff: keep bottom-eff fraction among D ----
-    # D selection means small pB; want fraction(pB_D < tD) = eff -> tD = quantile at eff
-    tD = torch.quantile(pB_D, eff).detach()
-
-    # penalize B that would fall into D region (false positives for D selection)
-    penalty_D = F.softplus((tD - pB_B) / tau).mean()
-
-    return penalty_B, penalty_D
-
-
-# ================= NEW: HNM helpers =================
-from torch.utils.data import Dataset, Subset
-
-class WithIndex(Dataset):
-    """Wrap a subset so __getitem__ adds subset-local index for mining."""
-    def __init__(self, subset):
-        self.subset = subset
-    def __len__(self):
-        return len(self.subset)
-    def __getitem__(self, i):
-        d = self.subset[i]
-        d["_i_local"] = i  # index inside this subset
-        return d
-
-def hnm_collate(samples):
-    """Collate wrapper: keep original hf_semi_collate output + add _i_local tensor."""
-    batch = hf_semi_collate(samples)
-    batch["_i_local"] = torch.tensor([s["_i_local"] for s in samples], dtype=torch.long)
-    return batch
-
-@torch.no_grad()
-def mine_hard_global_indices(model, loader, subset_epoch, device, k=2000):
-    """
-    Returns:
-      hard_D_global: D samples with largest pB (most B-like)
-      hard_B_global: B samples with smallest pB (most D-like)
-    Indices are GLOBAL indices in the full dataset.
-    """
-    model.eval()
-
-    pB_list = []
-    y_list = []
-    gidx_list = []
-
-    for batch in loader:
-        ele = batch["ele_feat"].to(device)
-        had = batch["had_feat"].to(device)
-        mask = batch["had_mask"].to(device)
-        labels = batch["label"].to(device)
-
-        logits = model(ele, had, mask)
-        pB = torch.softmax(logits, dim=-1)[:, 1].detach().cpu()
-
-        i_local = batch["_i_local"].detach().cpu().tolist()
-
-        # map subset-local -> global dataset idx
-        for il in i_local:
-            gidx = subset_local_to_global_dataset_idx(subset_epoch, int(il))
-            gidx_list.append(gidx)
-
-        pB_list.append(pB)
-        y_list.append(labels.detach().cpu())
-
-    if len(pB_list) == 0:
-        return [], []
-
-    pB_all = torch.cat(pB_list)
-    y_all  = torch.cat(y_list)
-    g_all  = torch.tensor(gidx_list, dtype=torch.long)
-
-    maskD = (y_all == 0)
-    maskB = (y_all == 1)
-
-    hard_D_global = []
-    hard_B_global = []
-
-    if maskD.any():
-        pD = pB_all[maskD]
-        gD = g_all[maskD]
-        kk = min(k, pD.numel())
-        top_idx = torch.topk(pD, kk, largest=True).indices
-        hard_D_global = gD[top_idx].tolist()
-
-    if maskB.any():
-        pBv = pB_all[maskB]
-        gB = g_all[maskB]
-        kk = min(k, pBv.numel())
-        bot_idx = torch.topk(pBv, kk, largest=False).indices
-        hard_B_global = gB[bot_idx].tolist()
-
-    return hard_D_global, hard_B_global
-
 
 def main():
     args = parse_args()
@@ -321,7 +176,7 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    print(f"[INFO] Loading dataset from: {args.root_file}")
+    print(f"[INFO] Loading dataset from: {args.root_file}")  
     dataset = HFSemiClassifier(
         args.root_file,
         tree_name="tree",
@@ -349,20 +204,13 @@ def main():
     train_idx_map = build_ptbin_class_index(train_set, dataset, pt_edges, num_classes=2)
     val_idx_map   = build_ptbin_class_index(val_set, dataset, pt_edges, num_classes=2)
 
-    # ===== NEW: global->local maps for HNM injection =====
-    # train_set.indices are GLOBAL dataset indices
-    train_global2local = {int(g): i for i, g in enumerate(train_set.indices)}
-    val_global2local   = {int(g): i for i, g in enumerate(val_set.indices)}
-
-    # store mined hard samples as LOCAL indices in train_set
-    hard_train_local = []
-
     # 打印每个bin的计数（可选但强烈建议）
     n_bins = len(pt_edges) - 1
     for b in range(n_bins):
         nD = len(train_idx_map[(b,0)])
         nB = len(train_idx_map[(b,1)])
         print(f"[INFO] Train bin {pt_edges[b]:.2f}-{pt_edges[b+1]:.2f}: D={nD}, B={nB}, keep(each)={min(nD,nB)}")
+
 
     # ======= benchmark knob here =======
     pooling = args.pooling
@@ -371,17 +219,17 @@ def main():
     clf_hidden_dims = (128, 128, 128)
     set_embed_dim = 128
 
-    model = DeepSetsHF(
-        had_input_dim=5,
-        ele_input_dim=3,
-        had_hidden_dims=had_hidden_dims,
-        set_embed_dim=set_embed_dim,
-        clf_hidden_dims=clf_hidden_dims,
-        n_classes=2,
-        use_ele_in_had_encoder=True,
-        use_ele_feat=True,
-        pooling=pooling,
-    ).to(device)
+    # model = DeepSetsHF(
+    #     had_input_dim=5,
+    #     ele_input_dim=3,
+    #     had_hidden_dims=had_hidden_dims,
+    #     set_embed_dim=set_embed_dim,
+    #     clf_hidden_dims=clf_hidden_dims,
+    #     n_classes=2,
+    #     use_ele_in_had_encoder=True,
+    #     use_ele_feat=True,
+    #     pooling=pooling,
+    # ).to(device)
 
     # model = PointNetHF(
     #     had_input_dim=5,
@@ -390,10 +238,22 @@ def main():
     #     point_embed_dim=256,
     #     clf_hidden_dims=(256, 256),
     #     n_classes=2,
-    #     use_ele_in_point_encoder=True,  # 等价于你 DeepSets 里的 use_ele_in_had_encoder
+    #     use_ele_in_point_encoder=True,  # same with DeepSets setting
     #     use_ele_feat=True,
-    #     pooling="max",                  # PointNet 最常用 max；你也可试 mean/sum
+    #     pooling="max",                  # PointNet 最常用 max
     # ).to(device)
+
+    # ===== Transformer baseline =====
+    model = SetTransformerHF(
+        had_input_dim=5,
+        ele_input_dim=3,
+        d_model=128,
+        nhead=4,
+        num_layers=2,        # 2-layer transformer encoder
+        dim_feedforward=256,
+        dropout=0.1,
+        n_classes=2,
+    ).to(device)
 
     criterion = nn.CrossEntropyLoss(reduction="none")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -421,14 +281,6 @@ def main():
         val_epoch_set = resample_balanced_by_ptbin(
             val_set, val_idx_map, pt_edges, generator=g, num_classes=2
         )
-
-        # ===== NEW: inject mined hard samples into TRAIN epoch set (oversample) =====
-        if epoch >= args.hnm_start_epoch and args.hnm_mult > 0 and len(hard_train_local) > 0:
-            injected = []
-            for _ in range(args.hnm_mult):
-                injected.extend(hard_train_local)
-            # train_epoch_set is Subset(train_set, indices_local_in_train_set)
-            train_epoch_set = Subset(train_set, list(train_epoch_set.indices) + injected)
 
         train_loader = DataLoader(
             train_epoch_set,
@@ -479,12 +331,7 @@ def main():
             else:
                 fairness_penalty = torch.tensor(0.0, device=device)
 
-            # ===== operating-point penalties (route2) =====
-            pB = torch.softmax(logits, dim=-1)[:, 1]  # probability of class B
-            pen_B, pen_D = op_point_penalty(pB, labels, eff=args.op_eff, tau=args.op_tau)
-            op_penalty = 0.5 * (pen_B + pen_D)
-
-            loss = base_loss + args.fair_lambda * fairness_penalty + args.op_lambda * op_penalty
+            loss = base_loss + args.fair_lambda * fairness_penalty
             loss.backward()
             optimizer.step()
 
@@ -520,9 +367,6 @@ def main():
         val_class_correct = [0, 0, 0]
         val_class_total = [0, 0, 0]
 
-        all_pB = []
-        all_y  = []
-
         with torch.no_grad():
             for batch in val_loader:
                 ele = batch["ele_feat"].to(device)
@@ -537,12 +381,6 @@ def main():
                 per_sample_loss = criterion(logits, labels)
                 base_loss = per_sample_loss.mean()
 
-                # collect pB and y for operating-point evaluation later
-                pB = torch.softmax(logits, dim=-1)[:, 1]
-                mask_db = (labels == 0) | (labels == 1)
-                all_pB.append(pB[mask_db].detach().cpu())
-                all_y.append(labels[mask_db].detach().cpu())
-
                 if mask_D.any() and mask_B.any():
                     loss_D = per_sample_loss[mask_D].mean()
                     loss_B = per_sample_loss[mask_B].mean()
@@ -550,11 +388,7 @@ def main():
                 else:
                     fairness_penalty = torch.tensor(0.0, device=device)
 
-                pB = torch.softmax(logits, dim=-1)[:, 1]
-                pen_B, pen_D = op_point_penalty(pB, labels, eff=args.op_eff, tau=args.op_tau)
-                op_penalty = 0.5 * (pen_B + pen_D)
-
-                loss = base_loss + args.fair_lambda * fairness_penalty + args.op_lambda * op_penalty
+                loss = base_loss + args.fair_lambda * fairness_penalty
 
                 val_loss += loss.item() * labels.size(0)
 
@@ -600,55 +434,6 @@ def main():
         #     print(f"[INFO] Early stopping triggered after {args.patience} epochs with no improvement.")
         #     break
 
-        pB_all = torch.cat(all_pB)
-        y_all  = torch.cat(all_y)
-
-        maskB = (y_all == 1)
-        maskD = (y_all == 0)
-
-        # B operating point: keep top eff among true B
-        tB = torch.quantile(pB_all[maskB], 1.0 - args.op_eff)
-        selB = (pB_all >= tB)
-        purB = (y_all[selB] == 1).float().mean().item()
-
-        # D operating point: keep bottom eff among true D (small pB)
-        tD = torch.quantile(pB_all[maskD], args.op_eff)
-        selD = (pB_all <= tD)
-        purD = (y_all[selD] == 0).float().mean().item()
-
-        print(f"    Purity@eff={args.op_eff:.2f}:  B_pur={purB:.4f}   D_pur={purD:.4f}")
-
-        # ===== NEW: Mine hard samples for NEXT epoch =====
-        if epoch >= args.hnm_start_epoch:
-            if args.hnm_from == "train":
-                mine_base = train_epoch_set
-                g2l = train_global2local
-            else:
-                mine_base = val_epoch_set
-                g2l = val_global2local
-
-            mine_loader = DataLoader(
-                WithIndex(mine_base),
-                batch_size=args.batch_size,
-                shuffle=False,
-                num_workers=args.num_workers,
-                collate_fn=hnm_collate,
-                pin_memory=True if device.type == "cuda" else False,
-            )
-
-            hardD_g, hardB_g = mine_hard_global_indices(
-                model, mine_loader, mine_base, device, k=args.hnm_k
-            )
-
-            # convert mined global indices -> local indices in TRAIN set (for injection)
-            hard_local_train = []
-            for gidx in (hardD_g + hardB_g):
-                if gidx in train_global2local:
-                    hard_local_train.append(train_global2local[gidx])
-
-            hard_train_local = hard_local_train
-            print(f"    [HNM] mined hard samples (global): D={len(hardD_g)} B={len(hardB_g)} | injected(next epoch)={len(hard_train_local)} x{args.hnm_mult}")
-
         # save best model
         if epoch >= start_save_epoch and avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
@@ -660,8 +445,8 @@ def main():
             clf_arch_str = f"clf{len(clf_hidden_dims)}x{clf_hidden_dims[0]}"
             arch_str = f"{had_arch_str}_{clf_arch_str}_{pooling}"
 
-            best_name = f"DeepSetsHF_best_ALL_{pt_min_str}-{pt_max_str}_{arch_str}_M4.pt"
-            # best_name = f"PointnetsHF_best_ALL_{pt_min_str}-{pt_max_str}_{arch_str}_M4.pt"
+            # best_name = f"DeepSetsHF_best_ALL_{pt_min_str}-{pt_max_str}_{arch_str}_M4.pt"
+            best_name = f"PointnetsHF_best_ALL_{pt_min_str}-{pt_max_str}_{arch_str}_M4.pt"
             best_path = os.path.join(args.out_dir, best_name)
 
             torch.save(
@@ -692,7 +477,7 @@ def main():
     plt.grid(True)
 
     loss_fig_path = os.path.join(
-        args.out_dir, f"loss_curve_ALL_pt{args.pt_min}-{args.pt_max}_pool{args.pooling}.png"
+        args.out_dir, f"loss_curve_5FALL_pt{args.pt_min}-{args.pt_max}_pool{args.pooling}.png"
     )
     plt.savefig(loss_fig_path, dpi=150, bbox_inches="tight")
     plt.close()
