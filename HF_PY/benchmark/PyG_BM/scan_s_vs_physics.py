@@ -557,7 +557,7 @@ def main():
 
     # profile plots
     for vn in var_names:
-        out_png = prefix + f"_profile__{vn}.png"
+        out_png = prefix + f"profile_{vn}.png"
         profile_plot(obs_all[vn], s_all, y_all, vn, out_png, n_bins=int(args.profile_bins))
         print("[INFO] saved:", out_png)
 
