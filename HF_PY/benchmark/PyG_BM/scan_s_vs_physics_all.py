@@ -344,7 +344,12 @@ def parse_args():
                    type=str,
                    default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/deepset/DeepSetsHF_best_5FALL_3.0-10.0_had3x128_clf3x128_sum_M10.pt",
                    help="Path to model checkpoint (.pt) saved by train script.")
-    p.add_argument("--root-file", type=str, default="", help="Override ROOT file; else use ckpt['args']['root_file']")
+    p.add_argument(
+        "--root-file",
+        type=str,
+        default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_2_allAccept.root",
+        help="Override dataset ROOT file (default: dataset 2)."
+    )
     p.add_argument("--tree-name", type=str, default="tree")
     p.add_argument("--batch-size", type=int, default=512)
     p.add_argument("--num-workers", type=int, default=0)
