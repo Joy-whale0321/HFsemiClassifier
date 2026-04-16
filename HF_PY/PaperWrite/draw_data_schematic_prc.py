@@ -3,169 +3,149 @@ from matplotlib.patches import Circle, FancyArrowPatch, Arc, Rectangle
 import numpy as np
 
 
-def add_arrow(ax, p1, p2, lw=1.8, ms=14, ls='-', z=2):
-    ax.add_patch(
-        FancyArrowPatch(
-            p1, p2,
-            arrowstyle='->',
-            mutation_scale=ms,
-            linewidth=lw,
-            linestyle=ls,
-            color='black',
-            zorder=z
-        )
-    )
-
-
-def add_text(ax, x, y, s, fs=14, ha='center', va='center',
-             weight='normal', style='normal'):
-    ax.text(
-        x, y, s,
-        fontsize=fs,
-        ha=ha,
-        va=va,
-        weight=weight,
-        style=style
-    )
-
-
-def add_box(ax, xy, w, h, lw=1.5):
+def add_box(ax, xy, w, h, text, fontsize=13, lw=1.5):
     x, y = xy
-    rect = Rectangle((x, y), w, h, fill=False, linewidth=lw, color='black')
+    rect = Rectangle((x, y), w, h, fill=False, linewidth=lw)
     ax.add_patch(rect)
-    return rect
+    ax.text(x + w/2, y + h/2, text, ha='center', va='center', fontsize=fontsize)
+
+
+def add_arrow(ax, p1, p2, lw=1.5, ms=12):
+    ax.add_patch(FancyArrowPatch(p1, p2,
+                                arrowstyle='-|>',
+                                mutation_scale=ms,
+                                linewidth=lw))
 
 
 def unit_vec(deg):
-    rad = np.deg2rad(deg)
-    return np.array([np.cos(rad), np.sin(rad)])
+    r = np.deg2rad(deg)
+    return np.array([np.cos(r), np.sin(r)])
 
 
 def main():
-    plt.rcParams["font.family"] = "serif"
-    plt.rcParams["mathtext.fontset"] = "stix"
+    fig, ax = plt.subplots(figsize=(13,5))
+    ax.set_xlim(0,14)
+    ax.set_ylim(0,6)
+    ax.axis('off')
 
-    fig, ax = plt.subplots(figsize=(13.5, 5.4))
-    ax.set_xlim(0, 16)
-    ax.set_ylim(0, 7)
-    ax.axis("off")
+    # =====================
+    # pp collision（缩短）
+    # =====================
+    c = np.array([1.5,3])
 
-    # =========================================================
-    # Left: physics sketch
-    # =========================================================
-    collision = np.array([2.8, 3.45])
+    add_arrow(ax, (0.6,3.8), (1.3,3.2))   # shorter
+    add_arrow(ax, (0.6,2.2), (1.3,2.8))
 
-    # hadrons: 2 away-side + 2 near-side
-    hadron_specs = [
-        (150, 2.5),   # away upper
-        (-125, 2.55), # away lower
-        (35, 2.2),    # near upper -> h_i
-        (-30, 2.0),   # near lower
-    ]
+    ax.text(0.5,4.0,"p")
+    ax.text(0.5,2.0,"p")
 
-    hadron_ends = []
-    for ang, length in hadron_specs:
-        end = collision + length * unit_vec(ang)
-        hadron_ends.append(end)
-        add_arrow(ax, tuple(collision), tuple(end), lw=1.7, ms=13, z=1)
+    ax.add_patch(Circle(c,0.06))
+    ax.text(1.5,0.9,"pp collision", ha='center')
 
-    # collision point on top
-    ax.add_patch(Circle(tuple(collision), 0.16, color="#4C9ED9", zorder=5))
+    # =====================
+    # HF hadron（缩短 + 去掉中间箭头）
+    # =====================
+    hf = np.array([3.4,3.7])
+    decay = np.array([4.6,3.7])
 
-    add_text(ax, 4.1, 6.25, "charged hadrons in the same event", fs=19)
-    add_text(ax, collision[0], 0.8, "pp collision", fs=18)
+    add_arrow(ax, (1.7,3.1), hf)   # shorter
+    # ❌ 不再画 hf→decay 的箭头（删掉红线）
 
-    hi_end = hadron_ends[2]
-    add_text(ax, hi_end[0] + 0.16, hi_end[1] + 0.10, r"$h_i$", fs=18, ha='left')
-    add_text(
-        ax,
-        hi_end[0] + 0.85,
-        hi_end[1] + 0.52,
-        r"$(q_i,\ p_{T,i},\ \Delta\eta_i,\ \Delta\phi_i)$",
-        fs=16,
-        ha='left'
-    )
+    ax.add_patch(Circle(decay,0.05))
+    ax.text(3.2,4.2,"HF hadron (D/B)", ha='center')
+    ax.text(4.6,4.6,"semi-leptonic decay", ha='center')
 
-    # D/B
-    decay = collision + np.array([2.55, -0.03])
-    add_arrow(ax, tuple(collision), tuple(decay), lw=2.4, ms=14, z=2)
-    add_text(ax, (collision[0] + decay[0]) / 2, collision[1] - 0.58, "D/B", fs=22)
+    # =====================
+    # decay products（缩短）
+    # =====================
+    e_end = np.array([6.5,4.6])
+    nu_end = np.array([6.2,3.2])
 
-    ax.add_patch(Circle(tuple(decay), 0.055, color='black', zorder=4))
+    add_arrow(ax, decay, e_end)
+    add_arrow(ax, decay, nu_end)
 
-    # decay products
-    e_dir = 20
-    e_end = decay + 2.10 * unit_vec(e_dir)
-    nu_end = decay + 1.95 * unit_vec(-10)
-    x_end = decay + 1.55 * unit_vec(-58)
+    ax.text(6.6,4.8,r"$e^\pm$")
+    ax.text(6.3,3.1,r"$\nu_e + X$")
 
-    add_arrow(ax, tuple(decay), tuple(e_end), lw=2.0, ms=13, z=2)
-    add_arrow(ax, tuple(decay), tuple(x_end), lw=1.7, ms=13, z=2)
+    # =====================
+    # trigger box
+    # =====================
+    add_box(ax,(6.9,4.2),2.3,1,
+            "trigger electron\n$p_T > 3$ GeV/c",
+            fontsize=12)
 
-    ax.plot(
-        [decay[0], nu_end[0]],
-        [decay[1], nu_end[1]],
-        linestyle=(0, (8, 5)),
-        linewidth=1.8,
-        color='black',
-        zorder=1
-    )
+    add_arrow(ax, e_end, (6.9,4.7))  # shorter
 
-    add_text(ax, e_end[0] + 0.10, e_end[1] + 0.02, r"$e$", fs=18, ha='left')
-    add_text(ax, nu_end[0] + 0.12, nu_end[1] - 0.02, r"$\nu_e$", fs=17, ha='left')
-    add_text(ax, x_end[0] + 0.10, x_end[1] - 0.02, r"$X$", fs=18, ha='left')
+    # =====================
+    # hadron region
+    # =====================
+    ref = np.array([8.2,2.8])
+    ax.add_patch(Circle(ref,0.05))
 
-    # Delta phi
-    arc = Arc(
-        tuple(decay),
-        width=1.8,
-        height=1.8,
-        theta1=20,
-        theta2=35,
-        linewidth=1.8
-    )
+    add_arrow(ax,(8.0,4.2),(8.2,3.4))  # shorter
+
+    # electron axis（保留，但不连右边）
+    axis_end = ref + np.array([1.8,0])
+    add_arrow(ax, ref, axis_end)
+    ax.text(axis_end[0]+0.1,axis_end[1],"trigger electron axis", fontsize=11)
+
+    # hadrons（短）
+    angles = [60,25,-30,-60]
+    lengths = [1.2,1.0,1.1,1.3]
+
+    ends = []
+    for i,(a,L) in enumerate(zip(angles,lengths)):
+        end = ref + L*unit_vec(a)
+        ends.append(end)
+        add_arrow(ax, ref, end, lw=1.3)
+        ax.text(end[0]+0.05,end[1],f"$h_{i+1}$",fontsize=11)
+
+    # Δφ（只留一个）
+    arc = Arc(ref,1.4,1.4,theta1=0,theta2=60)
     ax.add_patch(arc)
-    add_text(ax, decay[0] + 0.95, decay[1] + 0.80, r"$\Delta\phi$", fs=18)
+    ax.text(ref[0]+0.5,ref[1]+0.3,r"$\Delta\phi$")
 
-    # connector to right box
-    add_arrow(ax, (7.85, 3.45), (8.65, 3.45), lw=1.2, ms=10, z=1)
+    # Δη（只留虚线，无箭头）
+    h1 = ends[0]
+    ax.plot([h1[0],h1[0]],[ref[1],h1[1]],'--',lw=1)
+    ax.text(h1[0]+0.1,ref[1]+0.5,r"$\Delta\eta$")
 
-    # =========================================================
-    # Right: dataset construction box
-    # =========================================================
-    box_x, box_y, box_w, box_h = 8.85, 1.45, 6.0, 4.95
-    add_box(ax, (box_x, box_y), box_w, box_h, lw=1.5)
+    ax.text(8.5,5.6,"charged hadrons in the same event", ha='center')
 
-    x0 = box_x + 0.35
-    y = box_y + box_h - 0.40
+    # =====================
+    # point cloud（无连接箭头）
+    # =====================
+    box_x, box_y = 10.2,1.6
+    box_w, box_h = 2.7,2.6
 
-    add_text(ax, x0, y, "Dataset construction", fs=21, ha='left', weight='bold')
+    add_box(ax,(box_x,box_y),box_w,box_h,"",fontsize=12)
 
-    y -= 0.58
-    add_text(ax, x0, y, "Trigger electron:", fs=16, ha='left', weight='bold')
-    y -= 0.50
-    add_text(ax, x0 + 0.18, y, r"heavy-flavor semi-leptonic $e$", fs=15, ha='left')
-    y -= 0.48
-    add_text(ax, x0 + 0.18, y, r"$p_T^e > 3\ \mathrm{GeV}/c$", fs=15, ha='left')
+    # ❌ 删除 hadron → box 的多余箭头
 
-    y -= 0.72
-    add_text(ax, x0, y, "Associated hadrons:", fs=16, ha='left', weight='bold')
-    y -= 0.50
-    add_text(ax, x0 + 0.18, y, "final-state, charged, non-lepton", fs=15, ha='left')
+    # inset axes
+    o = np.array([10.6,2.0])
+    add_arrow(ax,o,o+np.array([1.0,0]),lw=1,ms=9)
+    add_arrow(ax,o,o+np.array([0,1.0]),lw=1,ms=9)
 
-    y -= 0.72
-    add_text(ax, x0, y, "Per-hadron features relative to the electron:", fs=16, ha='left', weight='bold')
-    y -= 0.50
-    add_text(ax, x0 + 0.18, y, r"$(q_i,\ p_{T,i},\ \Delta\eta_i,\ \Delta\phi_i)$", fs=15, ha='left')
+    ax.text(o[0]+1.1,o[1],r"$\Delta\phi$",fontsize=10)
+    ax.text(o[0],o[1]+1.1,r"$\Delta\eta$",fontsize=10)
 
-    y -= 0.72
-    add_text(ax, x0, y, "Set input:", fs=16, ha='left', weight='bold')
-    y -= 0.50
-    add_text(ax, x0 + 0.18, y, r"$\{h_i\}_{i=1}^{N_h}$", fs=16, ha='left')
+    pts = np.array([[0.2,0.2],[0.6,0.4],[0.9,0.9],[0.4,0.8]])
+    for dx,dy in pts:
+        ax.add_patch(Circle(o+np.array([dx,dy]),0.03))
+
+    ax.text(box_x+box_w/2,box_y+1.3,"hadron set / point cloud", ha='center')
+    ax.text(box_x+box_w/2,box_y+0.3,r"$\{(p_T,\Delta\eta,\Delta\phi)_i\}$", ha='center')
+
+    # =====================
+    # caption
+    # =====================
+    ax.text(7,0.3,
+            "Event schematic for heavy-flavor semi-leptonic electron selection and charged-hadron set construction",
+            ha='center', fontsize=12)
 
     plt.tight_layout()
-    plt.savefig("hf_data_schematic_clean.pdf", bbox_inches="tight")
-    plt.savefig("hf_data_schematic_clean.png", dpi=300, bbox_inches="tight")
+    plt.savefig("clean_v2.pdf",bbox_inches='tight')
     plt.show()
 
 
