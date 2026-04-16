@@ -1,0 +1,16 @@
+model_label,model_type,pt_bin,n,auc,ckpt
+DeepSets-sum,deepset,3-4,771180,0.748277,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/deepset/DeepSetsHF_best_5FALL_3.0-10.0_had3x128_clf3x128_sum_M10.pt
+DeepSets-sum,deepset,4-5,241872,0.759899,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/deepset/DeepSetsHF_best_5FALL_3.0-10.0_had3x128_clf3x128_sum_M10.pt
+DeepSets-sum,deepset,5-6,45554,0.774613,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/deepset/DeepSetsHF_best_5FALL_3.0-10.0_had3x128_clf3x128_sum_M10.pt
+DeepSets-sum,deepset,6-7,11294,0.784476,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/deepset/DeepSetsHF_best_5FALL_3.0-10.0_had3x128_clf3x128_sum_M10.pt
+DeepSets-sum,deepset,7-8,3438,0.786124,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/deepset/DeepSetsHF_best_5FALL_3.0-10.0_had3x128_clf3x128_sum_M10.pt
+Transformer-L4,transformer,3-4,771180,0.749473,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/transformer/TransformerHF_best_ALL_3.0-10.0_layer4_M4.pt
+Transformer-L4,transformer,4-5,241872,0.763081,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/transformer/TransformerHF_best_ALL_3.0-10.0_layer4_M4.pt
+Transformer-L4,transformer,5-6,45554,0.780267,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/transformer/TransformerHF_best_ALL_3.0-10.0_layer4_M4.pt
+Transformer-L4,transformer,6-7,11294,0.788930,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/transformer/TransformerHF_best_ALL_3.0-10.0_layer4_M4.pt
+Transformer-L4,transformer,7-8,3438,0.797825,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/transformer/TransformerHF_best_ALL_3.0-10.0_layer4_M4.pt
+GNN-k8,gnn,3-4,771180,0.732281,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/gnn/gnnHF_best_ALL_3.0-10.0_k8.pt
+GNN-k8,gnn,4-5,241872,0.745049,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/gnn/gnnHF_best_ALL_3.0-10.0_k8.pt
+GNN-k8,gnn,5-6,45554,0.757784,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/gnn/gnnHF_best_ALL_3.0-10.0_k8.pt
+GNN-k8,gnn,6-7,11294,0.772321,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/gnn/gnnHF_best_ALL_3.0-10.0_k8.pt
+GNN-k8,gnn,7-8,3438,0.765541,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/gnn/gnnHF_best_ALL_3.0-10.0_k8.pt

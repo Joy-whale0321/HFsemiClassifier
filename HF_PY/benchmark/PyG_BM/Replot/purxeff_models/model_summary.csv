@@ -1,0 +1,4 @@
+model_label,model_type,n_total,n_D,n_B,ckpt
+DeepSets-sum,deepset,36762,18381,18381,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/deepset/DeepSetsHF_best_5FALL_3.0-10.0_had3x128_clf3x128_sum_M10.pt
+Transformer-L4,transformer,36762,18381,18381,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/transformer/TransformerHF_best_ALL_3.0-10.0_layer4_M4.pt
+GNN-k8,gnn,36762,18381,18381,/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/gnn/gnnHF_best_ALL_3.0-10.0_k8.pt
