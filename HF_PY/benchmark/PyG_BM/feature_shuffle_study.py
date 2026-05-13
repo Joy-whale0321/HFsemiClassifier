@@ -19,6 +19,11 @@ python /mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/feature_shuffle_st
   --ckpt /mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/deepset/DeepSetsHF_best_5FALL_3.0-10.0_had3x128_clf3x128_sum_M10.pt \
   --shuffle-features none,had_pt,had_deta,had_dphi,had_charge,ele_pt \
   --repeat-per-shuffle 3
+
+python /mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/feature_shuffle_study.py \
+  --ckpt /mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/transformer/TransformerHF_best_ALL_3.0-10.0_layer4_M4.pt \
+  --shuffle-features none,had_pt,had_deta,had_dphi,had_charge,ele_pt \
+  --repeat-per-shuffle 3
 '''
 
 import os
@@ -279,7 +284,7 @@ def make_metric_plots(rows: List[Dict[str, float]], out_prefix: str) -> None:
     plt.ylabel("AUC")
     plt.title("Feature shuffle impact on AUC")
     plt.tight_layout()
-    plt.savefig(out_prefix + "_auc.png", dpi=180)
+    plt.savefig(out_prefix + "_auc.pdf", dpi=180)
     plt.close()
 
     # Accuracy
@@ -289,7 +294,7 @@ def make_metric_plots(rows: List[Dict[str, float]], out_prefix: str) -> None:
     plt.ylabel("Accuracy")
     plt.title("Feature shuffle impact on accuracy")
     plt.tight_layout()
-    plt.savefig(out_prefix + "_accuracy.png", dpi=180)
+    plt.savefig(out_prefix + "_accuracy.pdf", dpi=180)
     plt.close()
 
     # Loss
@@ -299,7 +304,7 @@ def make_metric_plots(rows: List[Dict[str, float]], out_prefix: str) -> None:
     plt.ylabel("Cross-entropy loss")
     plt.title("Feature shuffle impact on loss")
     plt.tight_layout()
-    plt.savefig(out_prefix + "_loss.png", dpi=180)
+    plt.savefig(out_prefix + "_loss.pdf", dpi=180)
     plt.close()
 
     # --- ΔAUC horizontal bar plot (recommended for paper) ---
@@ -335,7 +340,7 @@ def make_metric_plots(rows: List[Dict[str, float]], out_prefix: str) -> None:
     plt.gca().spines["right"].set_visible(False)
 
     plt.tight_layout()
-    plt.savefig(out_prefix + "_delta_auc.png", dpi=300)
+    plt.savefig(out_prefix + "_delta_auc.pdf", dpi=300)
     plt.close()
 
 
@@ -614,12 +619,12 @@ def main():
 
     # plots
     make_metric_plots(rows, prefix)
-    print("[INFO] saved:", prefix + "_auc.png")
-    print("[INFO] saved:", prefix + "_accuracy.png")
-    print("[INFO] saved:", prefix + "_loss.png")
-    print("[INFO] saved:", prefix + "_delta_auc.png")
-    print("[INFO] saved:", prefix + "_delta_accuracy.png")
-    print("[INFO] saved:", prefix + "_delta_loss.png")
+    print("[INFO] saved:", prefix + "_auc.pdf")
+    print("[INFO] saved:", prefix + "_accuracy.pdf")
+    print("[INFO] saved:", prefix + "_loss.pdf")
+    print("[INFO] saved:", prefix + "_delta_auc.pdf")
+    print("[INFO] saved:", prefix + "_delta_accuracy.pdf")
+    print("[INFO] saved:", prefix + "_delta_loss.pdf")
 
     print("\n[SUMMARY]")
     for row in rows:

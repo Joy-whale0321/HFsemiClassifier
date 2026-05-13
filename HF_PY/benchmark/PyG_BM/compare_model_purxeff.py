@@ -328,8 +328,8 @@ def evaluate_one_model(
 
 
 # ----------------------------- plotting -----------------------------
-def make_one_plot(res: Dict, out_png: str, eff_min: float = 0.02) -> None:
-    ensure_dir_for_file(out_png)
+def make_one_plot(res: Dict, out_pdf: str, eff_min: float = 0.02) -> None:
+    ensure_dir_for_file(out_pdf)
 
     eff_max = 0.95
 
@@ -393,7 +393,7 @@ def make_one_plot(res: Dict, out_png: str, eff_min: float = 0.02) -> None:
     plt.ylim(0.0, 1.0)
 
     plt.tight_layout()
-    plt.savefig(out_png, dpi=180)
+    plt.savefig(out_pdf, dpi=180)
     plt.close()
 
 
@@ -516,9 +516,9 @@ def main():
     # save one figure per model
     for res in results:
         safe_label = sanitize_filename(res["label"])
-        out_png = f"{args.out_prefix}_{safe_label}_purxeff.png"
-        make_one_plot(res, out_png, eff_min=float(args.eff_min))
-        print(f"[INFO] saved: {out_png}")
+        out_pdf = f"{args.out_prefix}_{safe_label}_purxeff.pdf"
+        make_one_plot(res, out_pdf, eff_min=float(args.eff_min))
+        print(f"[INFO] saved: {out_pdf}")
 
     # csv summary
     out_csv = args.out_prefix + "_summary.csv"

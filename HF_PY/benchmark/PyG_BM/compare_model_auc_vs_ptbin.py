@@ -484,7 +484,7 @@ def main():
             auc_str = f"{auc:.4f}" if np.isfinite(auc) else "nan"
             print(f"[INFO]     {lab:>10s} | n={int(n):>5d} | AUC={auc_str}")
 
-    ensure_dir_for_file(args.out_prefix + "_auc_vs_ptbin.png")
+    ensure_dir_for_file(args.out_prefix + "_auc_vs_ptbin.pdf")
 
     # ---------- plot ----------
     x = np.arange(len(pt_edges) - 1)
@@ -510,10 +510,10 @@ def main():
     plt.legend(loc="best", fontsize=9)
     plt.tight_layout()
 
-    out_png = args.out_prefix + "_auc_vs_ptbin.png"
-    plt.savefig(out_png, dpi=180)
+    out_pdf = args.out_prefix + "_auc_vs_ptbin.pdf"
+    plt.savefig(out_pdf, dpi=180)
     plt.close()
-    print(f"[INFO] saved: {out_png}")
+    print(f"[INFO] saved: {out_pdf}")
 
     # ---------- csv ----------
     out_csv = args.out_prefix + "_auc_vs_ptbin.csv"

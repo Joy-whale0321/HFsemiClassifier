@@ -414,7 +414,7 @@ def main():
     # sort by AUC descending for nicer legend / summary
     results = sorted(results, key=lambda x: x["auc"], reverse=True)
 
-    ensure_dir_for_file(args.out_prefix + "_roc.png")
+    ensure_dir_for_file(args.out_prefix + "_roc.pdf")
 
     plt.figure(figsize=(6.2, 5.2))
     for res in results:
@@ -427,10 +427,10 @@ def main():
     plt.grid(True)
     plt.legend(loc="best", fontsize=9)
     plt.tight_layout()
-    out_png = args.out_prefix + "_roc.png"
-    plt.savefig(out_png, dpi=180)
+    out_pdf = args.out_prefix + "_roc.pdf"
+    plt.savefig(out_pdf, dpi=180)
     plt.close()
-    print(f"[INFO] saved: {out_png}")
+    print(f"[INFO] saved: {out_pdf}")
 
     out_txt = args.out_prefix + "_summary.txt"
     with open(out_txt, "w", encoding="utf-8") as f:

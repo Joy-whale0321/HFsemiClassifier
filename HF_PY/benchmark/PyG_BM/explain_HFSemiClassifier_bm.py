@@ -185,7 +185,7 @@ def build_ptbin_class_index_from_indices(dataset, indices, pt_edges, num_classes
 
     return idx_map
 
-def resample_balanced_by_ptbin_indices(idx_map, pt_edges, seed=12345, frac=1.0, num_classes=2):
+def resample_balanced_by_ptbin_indices(idx_map, pt_edges, seed=12345, frac=1.0, num_classes=2, max_keep_per_bin_per_class=500):
     rng = np.random.default_rng(seed)
     n_bins = len(pt_edges) - 1
     selected = []
@@ -194,7 +194,8 @@ def resample_balanced_by_ptbin_indices(idx_map, pt_edges, seed=12345, frac=1.0, 
         pools = [idx_map[(b, c)] for c in range(num_classes)]
         if any(len(p) == 0 for p in pools):
             continue
-        base_keep = min(len(pools[0]), len(pools[1]))
+        # base_keep = min(len(pools[0]), len(pools[1]))
+        base_keep = min(len(pools[0]), len(pools[1]), int(max_keep_per_bin_per_class))
         n_keep = int(np.floor(frac * base_keep))
         if n_keep <= 0:
             continue
@@ -219,7 +220,7 @@ def parse_args():
                    type=str, 
                    default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/deepset/DeepSetsHF_best_5FALL_3.0-10.0_had3x128_clf3x128_sum_M10.pt", 
                    help="Path to model checkpoint (.pt) saved by train script.")
-    p.add_argument("--root-file", type=str, default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_p5B_2_allAccept.root", help="Override dataset ROOT file (default: from ckpt args).")
+    p.add_argument("--root-file", type=str, default="/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_2_allAccept.root", help="Override dataset ROOT file (default: from ckpt args).")
     p.add_argument("--tree-name", type=str, default="tree", help="TTree name (default: tree).")
     p.add_argument("--batch-size", type=int, default=512)
     p.add_argument("--num-workers", type=int, default=0)
@@ -475,7 +476,7 @@ def main():
     plt.title("Score distribution: p(B)")
     plt.grid(True)
     plt.legend(loc="best")
-    out1 = prefix + "_score_pB.png"
+    out1 = prefix + "_score_pB.pdf"
     plt.tight_layout()
     plt.savefig(out1, dpi=150)
     plt.close()
@@ -489,7 +490,7 @@ def main():
     plt.title("Score distribution: logit diff")
     plt.grid(True)
     plt.legend(loc="best")
-    out2 = prefix + "_score_logitdiff.png"
+    out2 = prefix + "_score_logitdiff.pdf"
     plt.tight_layout()
     plt.savefig(out2, dpi=150)
     plt.close()
@@ -505,7 +506,7 @@ def main():
     plt.title("ROC (overall) using p(B)")
     plt.grid(True)
     plt.legend(loc="best")
-    out3 = prefix + "_roc_all.png"
+    out3 = prefix + "_roc_all.pdf"
     plt.tight_layout()
     plt.savefig(out3, dpi=150)
     plt.close()
@@ -534,7 +535,7 @@ def main():
     plt.title("ROC by electron pT bin (p(B))")
     plt.grid(True)
     plt.legend(loc="best", fontsize=8)
-    out4 = prefix + "_roc_by_pt.png"
+    out4 = prefix + "_roc_by_pt.pdf"
     plt.tight_layout()
     plt.savefig(out4, dpi=150)
     plt.close()
@@ -574,7 +575,7 @@ def main():
     plt.xlim(-0.02, 1.02)
     plt.ylim(-0.02, 1.02)
 
-    out_pe = prefix + "_purxeff_DB.png"
+    out_pe = prefix + "_purxeff_DB.pdf"
     plt.tight_layout()
     plt.savefig(out_pe, dpi=150)
     plt.close()
