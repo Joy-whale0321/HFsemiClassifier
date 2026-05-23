@@ -1,0 +1,43 @@
+{
+  "tag": "score_hadron",
+  "root_file": "/mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_1_allAccept.root",
+  "tree": "tree",
+  "use_score": true,
+  "tf_checkpoint": "/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/transformer/TransformerHF_best_ALL_3.0-10.0_layer4_M4.pt",
+  "feature_set": "hadron",
+  "features": [
+    "s_TF",
+    "n_hadron",
+    "sum_hadron_pt",
+    "mean_hadron_pt",
+    "lead_hadron_pt",
+    "width_eta",
+    "width_phi",
+    "weighted_width_eta",
+    "weighted_width_phi",
+    "rms_deltaR",
+    "min_deltaR",
+    "sum_hadron_charge",
+    "sum_abs_hadron_charge"
+  ],
+  "auc_train": 0.7819331324174816,
+  "auc_test": 0.7815073270662845,
+  "acc_test": 0.710852959898154,
+  "max_per_class_per_ptbin": 500,
+  "ds_pt_bin_width": 0.25,
+  "ds_pt_edges": "",
+  "n_after_ptbin_balance_limit": 20946,
+  "weight_path": "/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/BDT/weight_of_BDT/bdt_score_hadron.joblib",
+  "feature_table_path": "/mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/BDT/results_bdt/feature_table_score_hadron.csv",
+  "selection": {
+    "pt_min": 3.0,
+    "pt_max": 10.0,
+    "eta_abs_max": 5.0,
+    "use_log_pt": false,
+    "use_had_eta": true,
+    "had_pt_min": 0.2,
+    "had_pt_max": null,
+    "min_had": 4,
+    "dphi_windows": null
+  }
+}

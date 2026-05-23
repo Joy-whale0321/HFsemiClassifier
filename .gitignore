@@ -5,4 +5,5 @@
 *.npz
 *.txt
 *.pdf
+*.csv
 __pycache__/

@@ -31,7 +31,7 @@
 # cd /mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM
 #
 """
-python plot_s_physics_profiles_transformer.py \
+python plot_s_4_transformer.py \
   --ckpt /mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/transformer/TransformerHF_best_ALL_3.0-10.0_layer4_M4.pt \
   --root-file /mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_2_allAccept.root \
   --pt-min 3.0 \
@@ -60,18 +60,24 @@ from model_HFSemiClassifier import SetTransformerHF
 # -----------------------------
 # utils
 # -----------------------------
-def plot_truth_fraction(
+def make_truth_log_ratio_profile(
     x: np.ndarray,
     y: np.ndarray,
-    x_label: str,
-    title: str,
-    out_pdf: str,
     n_bins: int = 30,
     x_quantile_clip: float = 0.005,
     min_count: int = 30,
-):
-    ensure_dir_for_file(out_pdf)
+) -> Dict[str, np.ndarray]:
+    """
+    Build binned truth log-ratio profile: log(N_B / N_D).
 
+    y convention follows the existing dataset convention:
+      y = 0: D
+      y = 1: B
+
+    The binning and event selection are kept consistent with the existing
+    profile construction. Bins with too few total entries or zero D/B entries
+    are skipped.
+    """
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.int64)
 
@@ -79,15 +85,27 @@ def plot_truth_fraction(
     x = x[good]
     y = y[good]
 
+    if x.size < min_count:
+        return {}
+
     lo = np.quantile(x, x_quantile_clip)
     hi = np.quantile(x, 1.0 - x_quantile_clip)
+
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        lo = float(np.min(x))
+        hi = float(np.max(x))
+
+    if hi <= lo:
+        return {}
 
     edges = np.linspace(lo, hi, n_bins + 1)
     centers = 0.5 * (edges[:-1] + edges[1:])
 
-    bfrac = np.full(n_bins, np.nan)
-    berr = np.full(n_bins, np.nan)
-    count = np.zeros(n_bins, dtype=int)
+    log_ratio = np.full(n_bins, np.nan)
+    log_ratio_err = np.full(n_bins, np.nan)
+    nb_arr = np.zeros(n_bins, dtype=np.int64)
+    nd_arr = np.zeros(n_bins, dtype=np.int64)
+    count = np.zeros(n_bins, dtype=np.int64)
 
     bid = np.searchsorted(edges, x, side="right") - 1
 
@@ -98,35 +116,26 @@ def plot_truth_fraction(
             continue
 
         nb = int(np.sum(y[sel] == 1))
-        f = nb / n
+        nd = int(np.sum(y[sel] == 0))
 
-        bfrac[b] = f
-        berr[b] = np.sqrt(f * (1.0 - f) / n)
+        if nb <= 0 or nd <= 0:
+            continue
+
+        log_ratio[b] = float(np.log(nb / nd))
+        log_ratio_err[b] = float(np.sqrt(1.0 / nb + 1.0 / nd))
+        nb_arr[b] = nb
+        nd_arr[b] = nd
         count[b] = n
 
-    good = np.isfinite(bfrac)
-
-    plt.figure(figsize=(6.2, 4.8))
-    plt.errorbar(
-        centers[good],
-        bfrac[good],
-        yerr=berr[good],
-        fmt="o",
-        markersize=4,
-        linewidth=1.4,
-        capsize=2.5,
-    )
-
-    plt.axhline(0.5, linestyle="--", linewidth=1.0)
-    plt.ylim(0.0, 1.0)
-
-    plt.xlabel(x_label)
-    plt.ylabel(r"$N_B/(N_D+N_B)$")
-    plt.title(title)
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(out_pdf, dpi=180)
-    plt.close()
+    return {
+        "centers": centers,
+        "edges": edges,
+        "log_ratio": log_ratio,
+        "log_ratio_err": log_ratio_err,
+        "nb": nb_arr,
+        "nd": nd_arr,
+        "count": count,
+    }
 
 
 def ensure_dir(path: str) -> None:
@@ -618,6 +627,7 @@ def plot_profile(
     title: str,
     out_pdf: str,
     band: str = "stderr",
+    truth_log_ratio_prof: Optional[Dict[str, np.ndarray]] = None,
 ) -> None:
     ensure_dir_for_file(out_pdf)
 
@@ -659,14 +669,32 @@ def plot_profile(
         zorder=3,
     )
 
+    if truth_log_ratio_prof is not None:
+        xr = truth_log_ratio_prof["centers"]
+        yr = truth_log_ratio_prof["log_ratio"]
+        yrerr = truth_log_ratio_prof["log_ratio_err"]
+        good_r = np.isfinite(xr) & np.isfinite(yr) & np.isfinite(yrerr)
+
+        plt.errorbar(
+            xr[good_r],
+            yr[good_r],
+            yerr=yrerr[good_r],
+            fmt="s",
+            markersize=4,
+            linewidth=1.2,
+            capsize=2.5,
+            label=r"truth $\log(N_B/N_D)$",
+            zorder=4,
+        )
+
     plt.axhline(0.0, linestyle="--", linewidth=1.0)
     plt.ylim(-2.2, 1.0)
 
     plt.xlabel(x_label)
-    plt.ylabel(r"$s = \mathrm{logit}_B - \mathrm{logit}_D$")
+    plt.ylabel(r"$s = \mathrm{logit}_B - \mathrm{logit}_D$ or $\log(N_B/N_D)$")
     plt.title(title)
     plt.grid(True)
-    # plt.legend(loc="best", fontsize=8)
+    plt.legend(loc="best", fontsize=8)
     plt.tight_layout()
     plt.savefig(out_pdf, dpi=180)
     plt.close()
@@ -878,33 +906,22 @@ def main():
     # --------------------------------------------------------------------------
     tag = sanitize_filename(args.tag)
 
-    truth_ratio_dir = os.path.join(args.out_dir, f"{tag}_truth_fraction")
-    ensure_dir(truth_ratio_dir)
-
-    truth_ratio_obs = [
+    overlay_obs = [
         ("e_pt", r"electron $p_T$"),
         ("mean_had_pt", r"mean hadron $p_T$"),
         ("std_abs_dphi", r"std($|\Delta\phi|$)"),
         ("mean_abs_dphi", r"mean($|\Delta\phi|$)"),
     ]
 
-    for key, label in truth_ratio_obs:
-        out_pdf = os.path.join(
-            truth_ratio_dir,
-            f"{tag}_B_fraction_vs_{sanitize_filename(key)}.pdf"
-        )
-
-        plot_truth_fraction(
+    truth_log_ratio_profiles = {}
+    for key, label in overlay_obs:
+        truth_log_ratio_profiles[key] = make_truth_log_ratio_profile(
             x=obs_all[key],
             y=y_all,
-            x_label=label,
-            title=f"Truth B fraction vs {label}",
-            out_pdf=out_pdf,
             n_bins=int(args.profile_bins),
             x_quantile_clip=float(args.x_quantile_clip),
             min_count=int(args.min_count_per_bin),
         )
-        print(f"[INFO] saved truth fraction plot: {out_pdf}")
 
     # --------------------------------------------------------------------------
     # --------------------------------------------------------------------------
@@ -934,7 +951,8 @@ def main():
 
     rows = []
 
-    for key, label, category in selected_observables():
+    for key, label in overlay_obs:
+        category = "truth_log_ratio_overlay"
         if key not in obs_all:
             print(f"[WARN] skip missing observable: {key}")
             continue
@@ -957,9 +975,10 @@ def main():
         plot_profile(
             prof=prof,
             x_label=label,
-            title=f"Score profile vs {label}",
+            title=f"Score profile and truth log-ratio vs {label}",
             out_pdf=out_pdf,
             band=args.band,
+            truth_log_ratio_prof=truth_log_ratio_profiles.get(key),
         )
 
         x = obs_all[key]
@@ -1027,11 +1046,7 @@ def main():
         f.write("plot_style = point_with_errorbar_plus_local_weighted_smooth_guide_frac_0p05\n\n")
 
         categories = [
-            "width_topology",
-            "hardness_activity",
-            "momentum_concentration",
-            "electron_control",
-            "charge_correlation",
+            "truth_log_ratio_overlay",
         ]
 
         for cat in categories:
