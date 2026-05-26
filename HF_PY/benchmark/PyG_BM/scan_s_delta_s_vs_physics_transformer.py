@@ -30,7 +30,7 @@ python scan_s_delta_s_vs_physics_transformer.py \
   --pt-max 10.0 \
   --balance-ds \
   --max-keep-per-bin-per-class 500 \
-  --out-dir /mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/s_scan \
+  --out-dir /mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/s_scan_morebeautiful \
   --tag transformer
 '''
 
