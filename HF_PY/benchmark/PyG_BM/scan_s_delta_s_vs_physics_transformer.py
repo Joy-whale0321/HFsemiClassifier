@@ -573,6 +573,167 @@ def plot_delta_s_vs_physics(
     plt.close()
 
 
+def make_quantile_delta_arrays(
+    x: np.ndarray,
+    s: np.ndarray,
+    y: np.ndarray,
+    n_bins: int = 30,
+    min_count: int = 20,
+) -> Dict[str, np.ndarray]:
+    x = np.asarray(x, dtype=np.float64)
+    s = np.asarray(s, dtype=np.float64)
+    y = np.asarray(y, dtype=np.int64)
+
+    finite = np.isfinite(x) & np.isfinite(s)
+    x = x[finite]
+    s = s[finite]
+    y = y[finite]
+
+    if x.size < n_bins:
+        return {}
+
+    order = np.argsort(x, kind="mergesort")
+    x = x[order]
+    s = s[order]
+    y = y[order]
+
+    percentiles = 100.0 * (np.arange(n_bins, dtype=np.float64) + 0.5) / float(n_bins)
+    delta = np.full(n_bins, np.nan)
+    se_delta = np.full(n_bins, np.nan)
+    cD = np.zeros(n_bins, dtype=np.int64)
+    cB = np.zeros(n_bins, dtype=np.int64)
+
+    split_edges = np.linspace(0, x.size, n_bins + 1).astype(int)
+
+    for b in range(n_bins):
+        i0 = split_edges[b]
+        i1 = split_edges[b + 1]
+
+        xb = x[i0:i1]
+        sb = s[i0:i1]
+        yb = y[i0:i1]
+
+        if xb.size == 0:
+            continue
+
+        sD = sb[yb == 0]
+        sB = sb[yb == 1]
+        cD[b] = int(sD.size)
+        cB[b] = int(sB.size)
+
+        if sD.size >= min_count and sB.size >= min_count:
+            delta[b] = float(np.mean(sB) - np.mean(sD))
+            se_delta[b] = float(np.sqrt(np.var(sB, ddof=1) / sB.size + np.var(sD, ddof=1) / sD.size))
+
+    return {
+        "percentiles": percentiles,
+        "delta": delta,
+        "se_delta": se_delta,
+        "cD": cD,
+        "cB": cB,
+        "value_min": np.array([float(np.min(x))], dtype=np.float64),
+        "value_max": np.array([float(np.max(x))], dtype=np.float64),
+    }
+
+
+def plot_combined_delta_s_quantile(
+    obs_all: Dict[str, np.ndarray],
+    s: np.ndarray,
+    y: np.ndarray,
+    out_pdf: str,
+    observables: List[str],
+    n_bins: int = 30,
+    min_count: int = 20,
+) -> None:
+    ensure_dir_for_file(out_pdf)
+
+    plt.figure(figsize=(7.2, 4.8))
+
+    style_map = {
+        "mean_had_pt": dict(marker="s", linestyle="-"),
+        "mean_abs_dphi": dict(marker="o", linestyle="--"),
+        "std_abs_dphi": dict(marker="o", linestyle=":"),
+    }
+    fillstyle_map = {
+        "mean_had_pt": "full",
+        "mean_abs_dphi": "full",
+        "std_abs_dphi": "none",
+    }
+
+    for vn in observables:
+        if vn not in obs_all:
+            continue
+
+        prof = make_quantile_delta_arrays(
+            x=obs_all[vn],
+            s=s,
+            y=y,
+            n_bins=n_bins,
+            min_count=min_count,
+        )
+
+        if not prof:
+            continue
+
+        xq = prof["percentiles"]
+        delta = prof["delta"]
+        se = prof["se_delta"]
+        good = np.isfinite(delta) & np.isfinite(se)
+
+        if not np.any(good):
+            continue
+
+        vmin = float(prof["value_min"][0])
+        vmax = float(prof["value_max"][0])
+        label_map = {
+            "mean_had_pt": r"$\langle p_T^{\rm hadron}\rangle$",
+            "mean_abs_dphi": r"$\langle |\Delta\phi| \rangle$",
+            "std_abs_dphi": r"$\sigma(|\Delta\phi|)$",
+        }
+        label = f"{label_map.get(vn, vn)} [{vmin:.3g}, {vmax:.3g}]"
+
+        # plt.errorbar(
+        #     xq[good],
+        #     delta[good],
+        #     yerr=se[good],
+        #     marker="o",
+        #     linewidth=1.2,
+        #     markersize=4,
+        #     capsize=2,
+        #     label=label,
+        # )
+
+        style = style_map.get(vn, dict(marker="o", linestyle="-"))
+        fillstyle = fillstyle_map.get(vn, "full")
+
+        plt.errorbar(
+            xq[good],
+            delta[good],
+            yerr=se[good],
+            marker=style["marker"],
+            linestyle=style["linestyle"],
+            fillstyle=fillstyle,
+            linewidth=1.2,
+            markersize=4.5,
+            capsize=2,
+            label=label,
+        )
+
+    plt.axhline(0.0, linestyle="--", linewidth=1.0)
+    plt.xlabel("Observable percentile")
+    plt.ylabel(r"$\Delta s = \langle s\rangle_B - \langle s\rangle_D$")
+    plt.title(r"$\Delta s$ vs selected hadronic-environment observables")
+    plt.grid(True)
+    plt.legend(title="Observable [0--100% value range]", loc="best", fontsize=8, title_fontsize=8)
+
+    plt.xlim(-2, 102)
+    plt.xticks([0, 20, 40, 60, 80, 100])
+
+    plt.tight_layout()
+    plt.savefig(out_pdf, dpi=180)
+    plt.close()
+
+
 # -----------------------------
 # ranking
 # -----------------------------
@@ -747,7 +908,7 @@ def parse_args():
     p.add_argument("--max-keep-per-bin-per-class", type=int, default=99999)
 
     # profile
-    p.add_argument("--profile-bins", type=int, default=30)
+    p.add_argument("--profile-bins", type=int, default=10)
     p.add_argument("--x-quantile-clip", type=float, default=0.005)
     p.add_argument("--min-count-per-bin", type=int, default=20)
     p.add_argument(
@@ -950,6 +1111,17 @@ def main():
         )
 
         print(f"[INFO] saved plots for {vn}")
+
+    combined_delta_pdf = os.path.join(args.out_dir, f"{tag}_delta_s_selected_quantile.pdf")
+    plot_combined_delta_s_quantile(
+        obs_all=obs_all,
+        s=s_all,
+        y=y_all,
+        out_pdf=combined_delta_pdf,
+        observables=["mean_had_pt", "mean_abs_dphi", "std_abs_dphi"],
+        n_bins=int(args.profile_bins),
+        min_count=int(args.min_count_per_bin),
+    )
 
     # Correlation ranking: delta s vs physics
     delta_rows = compute_delta_s_correlations(profile_map)

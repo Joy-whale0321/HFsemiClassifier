@@ -31,7 +31,11 @@
 # cd /mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM
 #
 """
-python plot_s_physics_profiles_transformer.py \
+
+
+
+
+ \
   --ckpt /mnt/e/sphenix/HFsemiClassifier/HF_PY/benchmark/PyG_BM/Weight_of_Model/transformer/TransformerHF_best_ALL_3.0-10.0_layer4_M4.pt \
   --root-file /mnt/e/sphenix/HFsemiClassifier/HF_PY/Generate/DataSet/ppHF_eXDecay_5B_2_allAccept.root \
   --pt-min 3.0 \
@@ -643,7 +647,7 @@ def plot_profile(
             smooth["y_smooth"],
             linewidth=2.0,
             alpha=0.80,
-            label="smooth guide",
+            label="model score trend",
             zorder=2,
         )
 
@@ -655,7 +659,7 @@ def plot_profile(
         markersize=4,
         linewidth=1.4,
         capsize=2.5,
-        label=r"profile $\langle s\rangle$",
+        label=r"profile model score $\langle s\rangle$",
         zorder=3,
     )
 
@@ -663,7 +667,7 @@ def plot_profile(
     plt.ylim(-2.2, 1.0)
 
     plt.xlabel(x_label)
-    plt.ylabel(r"$s = \mathrm{logit}_B - \mathrm{logit}_D$")
+    plt.ylabel(r"$score s,\ \log(N_B/N_D)$")
     plt.title(title)
     plt.grid(True)
     # plt.legend(loc="best", fontsize=8)

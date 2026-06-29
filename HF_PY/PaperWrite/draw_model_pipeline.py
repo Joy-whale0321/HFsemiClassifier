@@ -1,192 +1,251 @@
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch, Circle
+from matplotlib.lines import Line2D
 
 
-def add_box(ax, x, y, w, h, text, fontsize=10, lw=1.2):
-    patch = FancyBboxPatch(
+def add_box(ax, x, y, w, h, text="", fc="#ffffff", ec="black",
+            fontsize=12, lw=1.4, rounding=0.08):
+    box = FancyBboxPatch(
         (x, y), w, h,
-        boxstyle="round,pad=0.02,rounding_size=0.05",
-        linewidth=lw,
-        fill=False
+        boxstyle=f"round,pad=0.02,rounding_size={rounding}",
+        linewidth=lw, edgecolor=ec, facecolor=fc
     )
-    ax.add_patch(patch)
-    ax.text(
-        x + w / 2,
-        y + h / 2,
-        text,
-        ha="center",
-        va="center",
-        fontsize=fontsize,
-        linespacing=1.15,
-    )
+    ax.add_patch(box)
+    if text:
+        ax.text(x + w / 2, y + h / 2, text,
+                ha="center", va="center",
+                fontsize=fontsize, linespacing=1.35)
     return {"x": x, "y": y, "w": w, "h": h}
 
 
-def pt_right(box):
-    return (box["x"] + box["w"], box["y"] + box["h"] / 2)
-
-
-def pt_left(box):
-    return (box["x"], box["y"] + box["h"] / 2)
-
-
-def pt_top(box):
-    return (box["x"] + box["w"] / 2, box["y"] + box["h"])
-
-
-def pt_bottom(box):
-    return (box["x"] + box["w"] / 2, box["y"])
-
-
-def add_arrow(ax, p1, p2, lw=1.2, ms=10):
-    arrow = FancyArrowPatch(
+def add_arrow(ax, p1, p2, lw=2.0, ms=18):
+    ax.add_patch(FancyArrowPatch(
         p1, p2,
-        arrowstyle="->",
+        arrowstyle="-|>",
         mutation_scale=ms,
         linewidth=lw,
-        shrinkA=2,
-        shrinkB=2,
-    )
-    ax.add_patch(arrow)
+        color="black",
+        shrinkA=3,
+        shrinkB=3
+    ))
+
+
+def add_poly_arrow(ax, points, lw=2.0, ms=18):
+    for p1, p2 in zip(points[:-2], points[1:-1]):
+        ax.add_line(Line2D(
+            [p1[0], p2[0]], [p1[1], p2[1]],
+            linewidth=lw, color="black"
+        ))
+
+    ax.add_patch(FancyArrowPatch(
+        points[-2], points[-1],
+        arrowstyle="-|>",
+        mutation_scale=ms,
+        linewidth=lw,
+        color="black",
+        shrinkA=0,
+        shrinkB=3
+    ))
+
+
+def add_feature_stack(ax, x, y, w=0.68):
+    cell_h = 0.29
+    gap = 0.025
+    dots_h = 0.38
+
+    top_y = y + 5 * cell_h + 5 * gap + dots_h
+
+    add_box(ax, x, top_y - cell_h, w, cell_h,
+            fc="#dff1ff", ec="black", lw=1.0, rounding=0.025)
+
+    add_box(ax, x, top_y - 2 * cell_h - gap, w, cell_h,
+            fc="#dff1ff", ec="black", lw=1.0, rounding=0.025)
+
+    dots_y = top_y - 2 * cell_h - 2 * gap - dots_h
+    add_box(ax, x, dots_y, w, dots_h,
+            fc="#dff1ff", ec="black", lw=1.0, rounding=0.025)
+
+    ax.text(x + w / 2, dots_y + dots_h / 2, r"$\vdots$",
+            ha="center", va="center", fontsize=15)
+
+    blue3_y = dots_y - gap - cell_h
+    add_box(ax, x, blue3_y, w, cell_h,
+            fc="#dff1ff", ec="black", lw=1.0, rounding=0.025)
+
+    red_start_y = blue3_y - gap
+    for i in range(3):
+        yy = red_start_y - (i + 1) * cell_h - i * gap
+        add_box(ax, x, yy, w, cell_h,
+                fc="#ffc6bf", ec="black", lw=1.0, rounding=0.025)
+
+
+def add_mlp(ax, x, y, w, h):
+    s = 1.2
+    dx = 0.10
+    dy = 0.12
+
+    cx = x + 0.95 + dx
+    cy = y + 0.85 + dy
+
+    xs0 = [x + 0.30 + dx, x + 0.95 + dx, x + 1.55 + dx]
+
+    ys1_0 = [y + 1.45 + dy, y + 1.05 + dy, y + 0.65 + dy, y + 0.25 + dy]
+    ys2_0 = [y + 1.45 + dy, y + 1.05 + dy, y + 0.25 + dy]
+    ys3_0 = [y + 1.10 + dy, y + 0.60 + dy]
+
+    def scale_point(px, py):
+        return cx + s * (px - cx), cy + s * (py - cy)
+
+    xs = [scale_point(xx, cy)[0] for xx in xs0]
+    ys1 = [scale_point(cx, yy)[1] for yy in ys1_0]
+    ys2 = [scale_point(cx, yy)[1] for yy in ys2_0]
+    ys3 = [scale_point(cx, yy)[1] for yy in ys3_0]
+
+    layers = [ys1, ys2, ys3]
+
+    for a in range(len(layers) - 1):
+        for yy1 in layers[a]:
+            for yy2 in layers[a + 1]:
+                ax.add_line(Line2D(
+                    [xs[a], xs[a + 1]], [yy1, yy2],
+                    lw=0.8, color="black", alpha=0.65
+                ))
+
+    for yy in ys1:
+        ax.add_patch(Circle((xs[0], yy), 0.12,
+                            facecolor="#edf7df", edgecolor="black", lw=1.0))
+
+    for yy in ys2:
+        ax.add_patch(Circle((xs[1], yy), 0.12,
+                            facecolor="#edf7df", edgecolor="black", lw=1.0))
+
+    ax.text(xs[1], scale_point(cx, y + 0.65 + dy)[1], r"$\vdots$",
+            ha="center", va="center", fontsize=16)
+
+    for yy in ys3:
+        ax.add_patch(Circle((xs[2], yy), 0.12,
+                            facecolor="#edf7df", edgecolor="black", lw=1.0))
+
+    ax.text(x + w / 2, y - 0.10, "Fully connected network",
+            ha="center", va="top", fontsize=12)
 
 
 def main():
     plt.rcParams.update({
-        "font.size": 10,
-        "font.family": "serif",
+        "font.family": "DejaVu Sans",
         "mathtext.fontset": "dejavuserif",
     })
 
-    fig, ax = plt.subplots(figsize=(13.0, 3.2))
+    fig, ax = plt.subplots(figsize=(16.35, 7.0))
 
-    # =========================================================
-    # Main row: ALL top edges aligned
-    # =========================================================
-    top_y = 1.25
-    h_small = 0.78
-    h_big = 1.52
+    bg = FancyBboxPatch(
+        (0.05, 0.45), 16.25, 6.5,
+        boxstyle="round,pad=0.02,rounding_size=0.10",
+        linewidth=1.2,
+        edgecolor="#8a6a2f",
+        facecolor="#f7eadb"
+    )
+    ax.add_patch(bg)
 
-    # x positions / widths
-    had_x, had_w = 0.25, 2.10
-    set_x, set_w = 2.90, 3.95
-    H_x, H_w = 7.30, 1.75
-    clf_x, clf_w = 9.45, 2.20
-    out_x, out_w = 12.10, 1.35
-
-    # all top borders aligned
-    had_y = top_y
-    set_y = top_y - (h_big - h_small)
-    H_y = top_y
-    clf_y = top_y
-    out_y = top_y
-
-    # electron box below classifier
-    ele_w, ele_h = 1.75, 0.72
-    ele_x = clf_x + (clf_w - ele_w) / 2
-    ele_y = 0.18
-
-    # =========================================================
-    # Boxes
-    # =========================================================
     had = add_box(
-        ax, had_x, had_y, had_w, h_small,
+        ax, 0.45, 4.05, 2.35, 1.85,
         "Hadron set\n"
-        "$(N\\times5)$\n"
-        "$p_T,\\ \\Delta\\eta,\\ \\sin\\Delta\\phi,\\ \\cos\\Delta\\phi,\\ q$",
-        fontsize=10
+        r"$(N\times 5)$" "\n"
+        r"$p_T,\ q,\ \Delta\eta,$" "\n"
+        r"$\sin\Delta\phi,\ \cos\Delta\phi$",
+        fc="#dff1ff", ec="black", fontsize=18
     )
 
-    set_block = add_box(
-        ax, set_x, set_y, set_w, h_big,
-        "Set modeling\n\n"
+    enc = add_box(
+        ax, 3.40, 3.0, 4.15, 3.55,
+        "Hadron-set encoder\n\n"
         "DeepSets:\n"
-        "shared encoder + pooling\n\n"
+        "shared MLP + pooling\n\n"
         "Transformer:\n"
-        "tokens + CLS\n\n"
+        "self-attention + CLS\n\n"
         "GNN:\n"
-        "kNN + EdgeConv + pooling",
-        fontsize=9.5
-    )
-
-    H = add_box(
-        ax, H_x, H_y, H_w, h_small,
-        "$H$\n"
-        "(set-level embedding)",
-        fontsize=10.3
-    )
-
-    clf = add_box(
-        ax, clf_x, clf_y, clf_w, h_small,
-        "MLP classifier\n"
-        "$(H \\oplus e)$",
-        fontsize=10.5
-    )
-
-    out = add_box(
-        ax, out_x, out_y, out_w, h_small,
-        "Output\n"
-        "$D/B$",
-        fontsize=10.5
+        "kNN graph + EdgeConv + pooling",
+        fc="#dcd5ff", ec="#6f50c8", fontsize=17
     )
 
     ele = add_box(
-        ax, ele_x, ele_y, ele_w, ele_h,
+        ax, 4.45, 0.90, 2.15, 1.45,
         "Electron\n"
-        "$(3)$\n"
-        "$p_T,\\ \\eta,\\ q$",
-        fontsize=10
+        r"$(3)$" "\n"
+        r"$p_T,\ q,\ \eta$",
+        fc="#ffc4bf", ec="black", fontsize=18
     )
 
-    # =========================================================
-    # Arrows: keep all top-row arrows strictly horizontal
-    # =========================================================
-    y_main = had_y + h_small / 2.0
+    plus_center = (8.62, 3.90)
+    ax.add_patch(Circle(plus_center, 0.28,
+                        facecolor="white", edgecolor="black", lw=2.0))
+    ax.text(*plus_center, "+", ha="center", va="center", fontsize=32)
 
-    # Hadron -> Set modeling
-    add_arrow(
+    ax.text(10.18, 5.55, r"$H \oplus e$",
+            ha="center", va="center", fontsize=20)
+    ax.text(10.18, 5.30, "(combined features)",
+            ha="center", va="center", fontsize=13)
+
+    add_feature_stack(ax, 9.92, 3.0)
+
+    clf = add_box(ax, 11.40, 2.65, 2.35, 2.55,
+                  fc="#eaf6df", ec="#66a64a", lw=1.4)
+    ax.text(12.58, 5.35, "MLP classifier",
+            ha="center", va="bottom", fontsize=15, weight="bold")
+    add_mlp(ax, 11.60, 3.10, 2.0, 1.65)
+
+    out = add_box(
+        ax, 14.55, 3.25, 1.60, 1.45,
+        "",
+        fc="#fff1c8",
+        ec="black"
+    )
+
+    ax.text(15.35, 4.30, "Output",
+            ha="center", va="center", fontsize=18)
+
+    ax.text(15.35, 3.95, r"$D/B$ origin",
+            ha="center", va="center", fontsize=16)
+
+    ax.text(15.35, 3.55,
+            r"$(s=\mathrm{logit}\ B-\mathrm{logit}\ D)$",
+            ha="center", va="center", fontsize=10)
+
+    # arrows
+    add_arrow(ax, (2.83, 4.98), (3.40, 4.98))
+
+    add_poly_arrow(
         ax,
-        (had_x + had_w, y_main),
-        (set_x, y_main)
+        [
+            (7.62, 5.00),
+            (8.62, 5.00),
+            (8.62, 4.20),
+        ]
     )
 
-    # Set modeling -> H
-    add_arrow(
+    add_poly_arrow(
         ax,
-        (set_x + set_w, y_main),
-        (H_x, y_main)
+        [
+            (6.67, 1.62),
+            (8.62, 1.62),
+            (8.62, 3.60),
+        ]
     )
 
-    # H -> Classifier
-    add_arrow(
-        ax,
-        (H_x + H_w, y_main),
-        (clf_x, y_main)
-    )
+    add_arrow(ax, (8.90, 3.90), (9.92, 3.90))
+    add_arrow(ax, (10.62, 3.90), (11.40, 3.90))
+    add_arrow(ax, (13.77, 3.90), (14.55, 3.90))
 
-    # Classifier -> Output
-    add_arrow(
-        ax,
-        (clf_x + clf_w, y_main),
-        (out_x, y_main)
-    )
+    ax.text(8.70, 4.4, "Concatenate",
+            ha="left", va="center", fontsize=12)
 
-    # Electron -> Classifier
-    add_arrow(
-        ax,
-        pt_top(ele),
-        pt_bottom(clf)
-    )
-
-    # =========================================================
-    # Canvas
-    # =========================================================
-    ax.set_xlim(0.0, 13.7)
-    ax.set_ylim(0.0, 2.35)
+    ax.set_xlim(0, 16.35)
+    ax.set_ylim(0.40, 7.0)
     ax.axis("off")
 
-    plt.tight_layout(pad=0.2)
-    plt.savefig("model_multimodel_aligned.pdf", bbox_inches="tight")
-    plt.savefig("model_multimodel_aligned.png", dpi=300, bbox_inches="tight")
+    plt.tight_layout(pad=0.1)
+    plt.savefig("model_architecture.pdf", bbox_inches="tight")
+    plt.savefig("model_architecture.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 

@@ -653,7 +653,7 @@ def plot_profile(
             smooth["y_smooth"],
             linewidth=2.0,
             alpha=0.80,
-            label="smooth guide",
+            label="model score trend",
             zorder=2,
         )
 
@@ -665,7 +665,7 @@ def plot_profile(
         markersize=4,
         linewidth=1.4,
         capsize=2.5,
-        label=r"profile $\langle s\rangle$",
+        label=r"profile model score $\langle s\rangle$",
         zorder=3,
     )
 
@@ -683,7 +683,7 @@ def plot_profile(
             markersize=4,
             linewidth=1.2,
             capsize=2.5,
-            label=r"truth $\log(N_B/N_D)$",
+            label=r"truth Data ratio $\log(N_B/N_D)$",
             zorder=4,
         )
 
@@ -691,7 +691,7 @@ def plot_profile(
     plt.ylim(-2.2, 1.0)
 
     plt.xlabel(x_label)
-    plt.ylabel(r"$s = \mathrm{logit}_B - \mathrm{logit}_D$ or $\log(N_B/N_D)$")
+    plt.ylabel(r"$score\ s,\ \log(N_B/N_D)$")
     plt.title(title)
     plt.grid(True)
     plt.legend(loc="best", fontsize=8)
@@ -906,11 +906,18 @@ def main():
     # --------------------------------------------------------------------------
     tag = sanitize_filename(args.tag)
 
+    # overlay_obs = [
+    #     ("e_pt", r"electron $p_T$"),
+    #     ("mean_had_pt", r"mean hadron $p_T$"),
+    #     ("std_abs_dphi", r"std($|\Delta\phi|$)"),
+    #     ("mean_abs_dphi", r"mean($|\Delta\phi|$)"),
+    # ]
+
     overlay_obs = [
         ("e_pt", r"electron $p_T$"),
-        ("mean_had_pt", r"mean hadron $p_T$"),
-        ("std_abs_dphi", r"std($|\Delta\phi|$)"),
-        ("mean_abs_dphi", r"mean($|\Delta\phi|$)"),
+        ("mean_had_pt", r"$\langle p_T^{\rm had}\rangle$"),
+        ("std_abs_dphi", r"$\sigma(|\Delta\phi|)$"),
+        ("mean_abs_dphi", r"$\langle |\Delta\phi| \rangle$"),
     ]
 
     truth_log_ratio_profiles = {}

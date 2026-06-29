@@ -1,0 +1,263 @@
+\documentclass[preprint,12pt]{elsarticle}
+% \documentclass[final,5p,times]{elsarticle}
+
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{subcaption}
+\usepackage{placeins}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{Heavy-Flavor Electron Classification Using Hadronic Environment as Point Cloud}
+
+\author[a]{J. Y. Zhang}
+\author[a]{W. B. He\corref{cor1}}
+\author[a]{L. Ma\corref{cor1}}
+\author[a]{H. Z. Huang}
+
+\cortext[cor1]{Corresponding author}
+
+\address[a]{Key Laboratory of Nuclear Physics and Ion-beam Application (MOE), Institute of Modern Physics, Fudan University, Shanghai 200433, China}
+
+\begin{abstract}
+
+Electrons from semi-leptonic decays of charm ($D$) and bottom ($B$) hadrons are important probes in high-energy collisions, while their separation remains challenging due to the similarity of the underlying decay topologies. In this work, we represent the hadronic environment as a point cloud and investigate a hadron-based approach for distinguishing charm- and bottom-origin electrons using several set-based machine learning architectures, including Transformer models. Comparable performance is observed across different architectures, indicating that the dominant limitation originates from the intrinsic similarity between charm- and bottom-related hadronic structures rather than model expressivity. At an experimentally relevant working point corresponding to approximately 40\% efficiency, the classifier achieves a purity close to 80\% on the test dataset and significantly improves the classification performance relative to a hand crafted-observable BDT baseline. By studying the relation between the model response and physics-motivated observables, together with feature perturbation tests, we find that the learned representation is primarily sensitive to geometric and topological properties of the hadronic environment. Comparisons with handcrafted observables further suggest that the learned representation captures nontrivial discriminating information beyond a small set of manually constructed variables.
+
+\end{abstract}
+
+\end{frontmatter}
+
+
+\section{Introduction}
+
+Heavy-flavor observables have been widely used to investigate heavy-quark dynamics, including heavy-flavor production, transport, and energy-loss mechanisms in high-energy collisions~\cite{Rapp:2018qla,Dong:2019unq,Zhang:2025tgt}.
+Electrons from semi-leptonic decays of heavy-flavor hadrons provide important probes for studying heavy-flavor production and medium properties in high-energy collisions~\cite{ALICE:2014ivb,ALICE:2012acz,Averbeck:2004dv,PHENIX:2010xji}. In particular, separating electrons originating from charm ($D$) and bottom ($B$) hadrons is essential for many heavy-flavor measurements. However, this separation remains challenging because charm- and bottom-decay electrons exhibit similar kinematic characteristics.
+
+Heavy-flavor observables have been widely used to investigate heavy-quark dynamics, including heavy-flavor production, transport, and energy-loss mechanisms in high-energy collisions.
+Existing experimental approaches mainly rely on displaced-vertex information~\cite{PHENIX:2015ynp, ALICE:2019nuy, ALICE:2021mgk, STAR:2021uzu}, such as the distance of closest approach (DCA), to distinguish charm and bottom contributions. These methods primarily exploit the lifetime difference between charm and bottom hadrons and have achieved considerable success experimentally. Nevertheless, they do not fully exploit correlations encoded in the hadronic environment. Differences in heavy-flavor production, fragmentation, and decay processes can lead to different patterns of associated hadronic activity around charm- and bottom-origin electrons~\cite{ALICE:2023kjg, Thomas:2024cso, Andronic:2015wma, PHENIX:2009dpd}. 
+
+This raises the question of how much information about the heavy-flavor origin is encoded in the hadronic environment itself, independent of explicit vertex observables. Traditional approaches typically characterize the hadronic activity using a limited number of handcrafted observables describing the local hadronic structure around the electron. While such observables are physically motivated and provide effective low-dimensional descriptions of the hadronic environment, they may not fully exploit the complete information encoded in the multi-particle event structure. In addition, combining many correlated observables in a systematic way becomes increasingly difficult as the complexity of the event structure grows.
+
+Recent advances in machine learning have made it possible to analyze high-dimensional particle-level data directly, enabling more complete exploitation of the information encoded in complex event structures~\cite{Zaheer:2017wmg, Wang:2018nkf}. In high-energy physics, collider events can be naturally represented as unordered particle sets, or point clouds, making set-based architectures particularly suitable for particle-level event modeling~\cite{Kasieczka:2021xcg, Guest:2018yhq, Albertsson:2018maf, Radovic:2018dip}. Architectures such as DeepSets, Transformer-based models, and graph neural networks have demonstrated strong performance in jet tagging, event classification, and jet substructure studies~\cite{Louppe:2017ipp, Komiske:2018cqr,Qu:2019gqs,Qu:2022mxj}.
+
+In this work, the hadronic environment  is represented as an unordered point cloud. We study how well charm- and bottom-origin electrons can be separated using only hadronic information, without explicit vertex observables.
+
+Several set-based architectures, including DeepSets, Transformer, and graph neural networks, are systematically compared. We study whether the observed performance depends strongly on the model architecture or is mainly limited by the similarity between charm- and bottom-hadron processes themselves. We also analyze the relation between the classifier response and physics-motivated observables to investigate which features of the hadronic environment are most relevant for the separation.
+
+
+\section{Methodology}
+
+\subsection{Dataset and Representation}
+
+The dataset used in this study is generated using Pythia simulations of proton--proton collisions at $\sqrt{s}=200$ GeV. Heavy-flavor electron candidates are selected in the transverse momentum range $3 < p_T^e < 10$ GeV, including both charge signs. Each electron is labeled according to whether it originates from a charm ($D$) or bottom ($B$) hadron semi-leptonic decay.
+
+\begin{figure}[htb]
+    \centering
+    \includegraphics[width=1.0\linewidth]{paperplot4latex/2/hf_data_schematic_final.pdf}
+    \caption{Schematic illustration of the dataset construction. For each selected electron, final-state charged hadrons in the same event are used to define the hadronic environment.}
+    \label{fig:dataset_generator_schematic}
+\end{figure}
+
+For each selected electron, an event-level sample is constructed by associating the electron with all final-state charged hadrons in the same event, as illustrated in Fig.~\ref{fig:dataset_generator_schematic}. Each hadron is initially characterized by its transverse momentum $p_{T,i}$, angular displacement relative to the electron $(\Delta\eta_i,\Delta\phi_i)$, and electric charge $q_i$. This defines a local coordinate system centered on the electron and retains both the kinematic and geometric information of the hadronic system.
+
+For the model input, the azimuthal displacement is represented by $\sin\Delta\phi_i$ and $\cos\Delta\phi_i$ to avoid the discontinuity at the azimuthal boundary. The hadronic environment is therefore represented as an unordered point cloud,
+\[
+\{h_i\}_{i=1}^{N_h}, \qquad
+h_i = (p_{T,i}, \Delta\eta_i, \sin\Delta\phi_i, \cos\Delta\phi_i, q_i).
+\]
+This representation is designed to encode information related to the decay topology and fragmentation pattern of the parent heavy-flavor hadron without imposing an artificial ordering on the associated particles.
+
+Since charm and bottom electrons exhibit intrinsically different transverse momentum spectra, a classifier could otherwise achieve artificial discrimination by exploiting this global kinematic difference. To suppress this trivial source of separation, a $p_T^e$-binned downsampling procedure is applied so that the yields of $D$- and $B$-origin electrons are balanced within each $p_T^e$ interval. This forces the classification task to rely primarily on differences in the hadronic environment.
+
+\subsection{Task Definition}
+
+The task is formulated as a binary classification problem to distinguish electrons originating from charm- and bottom-hadron semi-leptonic decays.
+
+The model produces two output logits corresponding to the charm and bottom hypotheses, denoted as $\mathrm{logit}_D$ and $\mathrm{logit}_B$, respectively. Based on these outputs, we define a continuous discriminant score,
+\[
+s = \mathrm{logit}_B - \mathrm{logit}_D.
+\]
+
+Larger values of $s$ indicate a higher likelihood for the electron to originate from a bottom hadron, while smaller values correspond to the charm hypothesis. This score provides a continuous discriminator that can be used to define different working points depending on the desired charm/bottom selection efficiency or purity. Throughout this work, the score $s$ is used both for performance evaluation and for studying the physics information encoded in the hadronic environment.
+
+\subsection{Model Architecture}
+
+The overall model architecture used in this work is illustrated in Fig.~\ref{fig:model_architecture}. The hadronic environment is represented as an unordered point cloud and processed through a set-based learning framework. Different set-modeling architectures are compared within a common classification pipeline.
+
+\begin{figure}[htb]
+    \centering
+    \includegraphics[width=1.0\linewidth]{paperplot4latex/2/model_multimodel_large.pdf}
+    \caption{Schematic illustration of the model architecture.}
+    \label{fig:model_architecture}
+\end{figure}
+
+For each sample, the input hadronic system consists of a variable-length set of charged hadrons characterized by their kinematic and charge information. Each hadron is first processed independently by a shared hadron encoder to obtain a latent particle-level representation.
+
+The resulting set of particle embeddings is then passed to a set-modeling module, which learns correlations and collective structures within the hadronic environment and produces a set-level representation $H$. In this work, three commonly used architectures for set-structured data are considered: DeepSets, Transformer, and Graph Neural Networks (GNNs). These architectures provide different mechanisms for modeling interactions among particles and are used here for a systematic comparison of their performance on the same physics task.
+
+The set-level representation $H$ is subsequently combined with electron-level features ($p_T^e$, $\eta^e$, and charge), and the combined representation is processed by a multilayer perceptron classifier to produce two output logits corresponding to the charm and bottom hypotheses.
+
+The difference between the two logits defines the discriminant score $s$ introduced in Sec.~2.2, which serves as a continuous representation of the learned charm--bottom separation. In addition to classification performance evaluation, this score is used throughout this work to study the physics information captured by the model and its relation to observables characterizing the hadronic environment.
+
+
+\section{Results and Discussions}
+
+\subsection{Classification Performance}
+
+We first evaluate the classification performance to determine whether the hadronic environment alone contains identifiable features related to the heavy-flavor origin of the electron. A successful classification would indicate that the model captures nontrivial structures and correlations in the hadronic system rather than performing a random separation.
+
+The performance is evaluated using several set-based architectures, including DeepSets, Transformer, and GNN-based models, in order to examine the robustness of the learned representation and its dependence on the model architecture.
+
+\begin{figure}[htb]
+    \centering
+    \includegraphics[width=0.78\linewidth]{paperplot4latex/3-1/model_compare_roc.pdf}
+    \caption{Receiver operating characteristic (ROC) curves for different set-based architectures, including DeepSets, Transformer, and GNN models. The true positive rate (TPR) corresponds to the fraction of correctly identified bottom electrons, while the false positive rate (FPR) represents the fraction of charm electrons misidentified as bottom electrons.}
+    \label{fig:ROC_diff_model}
+\end{figure}
+
+The receiver operating characteristic (ROC) curves for different architectures are shown in Fig.~\ref{fig:ROC_diff_model}. All models achieve a clear separation between charm- and bottom-origin electrons with similar AUC values. The comparable performance across DeepSets, Transformer, and GNN models indicates that the dominant limitation is not the model architecture itself, but the intrinsic similarity between charm- and bottom-related hadronic topologies.
+
+\begin{figure}[htb]
+    \centering
+    \includegraphics[width=0.78\linewidth]{paperplot4latex/3-1/model_auc_vs_ptbin_auc_vs_ptbin.pdf}
+    \caption{Classification performance as a function of electron transverse momentum for the DeepSets model. The horizontal axis shows the electron transverse momentum $p_T^e$, while the vertical axis represents the area under the ROC curve (AUC) evaluated in each $p_T^e$ interval.}
+    \label{fig:AUC_vs_pt}
+\end{figure}
+
+To further investigate the kinematic dependence of the classification performance, we evaluate the AUC as a function of the electron transverse momentum. The results for the DeepSets model are shown in Fig.~\ref{fig:AUC_vs_pt}. A clear improvement in performance is observed at higher $p_T^e$, indicating that the hadronic structures associated with charm and bottom decays become more distinguishable at higher momentum scales. Similar trends are observed for the other model architectures.
+
+To provide a more experimentally relevant characterization of the classifier performance, we further study the efficiency--purity relation obtained by scanning the classifier score threshold, as shown in Fig.~\ref{fig:eff_pur}.
+
+\begin{figure}[htb]
+    \centering
+    \includegraphics[width=0.78\linewidth]{paperplot4latex/3-1/model_Transformer-L4_purxeff.pdf}
+    \caption{Efficiency--purity performance.}
+    \label{fig:eff_pur}
+\end{figure}
+
+The resulting curves for both charm- and bottom-electron selections show that the classifier achieves a purity of approximately 80\% at an efficiency of about 40\%. Although the overall separation remains limited by the intrinsic similarity between charm and bottom decay topologies, the result demonstrates that the hadronic environment contains physically meaningful discriminating features.
+
+The smooth behavior of the efficiency--purity curves reflects the continuous nature of the classifier score, indicating that the model organizes events along a continuous charm--bottom discriminant axis rather than performing a hard binary separation. This behavior is particularly useful for experimental applications, where different operating points can be selected according to the requirements of a specific analysis.
+
+\subsection{Physical Interpretability of the Learned Features}
+
+\begin{figure}[htb]
+    \centering
+    \includegraphics[width=0.78\linewidth]{paperplot4latex/3-2/pt3.0-10.0_score_logitdiff.pdf}
+    \caption{Distribution of the classifier score $s$ for charm- and bottom-origin electrons.}
+    \label{fig:score_DB}
+\end{figure}
+
+Fig.~\ref{fig:score_DB} shows the distribution of the classifier score $s$ for charm- and bottom-origin electrons. Although the two distributions exhibit overlap, a visible separation is observed, indicating that the model captures nontrivial information from the hadronic environment . Rather than acting as a purely binary discriminator, the score reflects continuous variations in the event topology associated with heavy-flavor decays.
+
+To examine whether the classifier has captured the dominant statistical structures present in the data, the dependence of the classifier score on several physics-motivated observables characterizing the hadronic environment is studied. The corresponding observable distributions for charm- and bottom-origin electrons are shown together with the score profiles in Fig.~\ref{fig:score_dependence_scan}.
+
+\begin{figure}[htb]
+\centering
+
+\begin{subfigure}{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{paperplot4latex/3-2/TF4plotwithData/transformer_s_physics_profiles/transformer_s_physics_s_vs_e_pt.pdf}
+    \caption{}
+    \label{fig:score_dependence_a}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{paperplot4latex/3-2/TF4plotwithData/transformer_s_physics_profiles/transformer_s_physics_s_vs_mean_had_pt.pdf}
+    \caption{}
+    \label{fig:score_dependence_b} 
+\end{subfigure}
+
+\vspace{0.3cm}
+
+\begin{subfigure}{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{paperplot4latex/3-2/TF4plotwithData/transformer_s_physics_profiles/transformer_s_physics_s_vs_std_abs_dphi.pdf}
+    \caption{}
+    \label{fig:score_dependence_c}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{paperplot4latex/3-2/TF4plotwithData/transformer_s_physics_profiles/transformer_s_physics_s_vs_mean_abs_dphi.pdf}
+    \caption{}
+    \label{fig:score_dependence_d}
+\end{subfigure}
+
+\caption{Dependence of the classifier score $s$ on several observables characterizing the hadronic environment. The corresponding observable distributions for charm- and bottom-origin electrons are shown together with the score profiles.}
+\label{fig:score_dependence_scan}
+\end{figure}
+
+As shown in Fig.~\ref{fig:score_dependence_a}, the classifier score exhibits only a weak dependence on the electron transverse momentum. Since the dataset is balanced in electron $p_T$, this behavior indicates that the classifier response is not dominated by trivial differences in the electron kinematic distributions between charm- and bottom-origin electrons.
+
+In contrast, substantially stronger correlations are observed for observables associated with the hadronic topology. Figure~\ref{fig:score_dependence_b} shows a clear dependence of the classifier score on the average hadron transverse momentum, while an even stronger variation is observed as a function of the azimuthal angular dispersion $\mathrm{std}(|\Delta\phi|)$ in Fig.~\ref{fig:score_dependence_c}. Events with broader hadronic angular distributions tend to produce smaller classifier scores and are therefore more likely to be classified as charm-origin electrons. Meanwhile, the dependence on $\mathrm{mean}(|\Delta\phi|)$ shown in Fig.~\ref{fig:score_dependence_d} is comparatively weaker.
+
+The variations of the classifier response are found to follow the same qualitative trends observed in the underlying charm- and bottom-origin data distributions. This behavior indicates that the model has successfully captured the dominant topology-related statistical structures relevant for the classification task.
+
+To further investigate whether the learned representation contains discriminating information beyond a limited set of manually constructed observables, the classification performance obtained using different combinations of learned and handcrafted features is compared.
+
+\begin{figure}[htb]
+    \centering
+    \includegraphics[width=0.78\linewidth]{paperplot4latex/3-2/bdt_auc_input_set_compare.pdf}
+    \caption{Comparison of classification performance obtained using different combinations of learned and handcrafted input features.}
+    \label{fig:input_compare}
+\end{figure}
+
+As shown in Fig.~\ref{fig:input_compare}, the classifier using the learned score alone achieves substantially better performance than the classifier based only on handcrafted observables. This result suggests that the learned representation contains nontrivial structures and correlations beyond those described by a small number of manually constructed variables.
+
+Furthermore, combining the handcrafted observables with the learned score does not lead to a significant performance improvement relative to the learned score alone. This observation indicates that the dominant discriminating information encoded in these observables has already been effectively incorporated into the learned latent representation.
+
+To further investigate how the separation between bottom- and charm-origin electrons varies under different hadronic-environment configurations, the score separation is studied as a function of the three hadronic observables introduced above. For each observable, the events are divided into percentile intervals, and the quantity
+\[
+\Delta s = \langle s \rangle_{B} - \langle s \rangle_{D}
+\]
+is evaluated within each interval. Larger values of $\Delta s$ correspond to stronger local separation between bottom- and charm-origin events.
+
+\begin{figure}[htb]
+    \centering
+    \includegraphics[width=0.78\linewidth]{paperplot4latex/3-2/transformer_delta_s_selected_quantile.pdf}
+    \caption{Dependence of the score separation $\Delta s$ on percentile intervals of several observables characterizing the hadronic environment.}
+    \label{fig:delta_s_quantile}
+\end{figure}
+
+The results are shown in Fig.~\ref{fig:delta_s_quantile}. For the average hadron transverse momentum, $\Delta s$ increases steadily with increasing $\mathrm{mean}(p_T^{\mathrm{had}})$. This behavior indicates that events containing harder hadronic activity exhibit a larger separation between bottom- and charm-origin electrons. A possible physical interpretation is that harder hadronic environments are more likely to retain the characteristic differences in fragmentation and decay topology between bottom and charm hadrons, thereby providing richer discriminating information for the classifier.
+
+A similarly strong dependence is observed for the azimuthal angular dispersion $\mathrm{std}(|\Delta\phi|)$. Events with broader angular distributions tend to exhibit significantly larger $\Delta s$, indicating enhanced separation power in topologically more dispersed hadronic configurations. This behavior is consistent with the expectation that the spatial spread of hadronic activity carries important information related to the underlying heavy-flavor decay structure.
+
+In contrast, the dependence on $\mathrm{mean}(|\Delta\phi|)$ exhibits a different behavior. Events with relatively small average angular opening show a larger score separation, while $\Delta s$ decreases as $\mathrm{mean}(|\Delta\phi|)$ increases and subsequently approaches a nearly constant value in the large-angle region. This observation suggests that compact hadronic configurations preserve more distinguishable structural differences between bottom- and charm-origin events, whereas events with broadly distributed average angular opening become progressively less sensitive to such differences.
+
+Overall, these results indicate that different hadronic environment configurations contain different levels of accessible topology-related information relevant for heavy-flavor identification. In particular, events characterized by harder hadronic activity and broader spatial dispersion appear to preserve more distinctive structural features associated with bottom- and charm-origin electrons, leading to more pronounced differences in the learned classifier response.
+
+To directly quantify the relative importance of different input features to the model performance, we further probe which information the classifier relies on most strongly, we perform a feature perturbation test in which individual features are randomly shuffled across events while all other inputs are kept unchanged.
+
+\begin{figure}[htb]
+    \centering
+    \includegraphics[width=0.78\linewidth]{paperplot4latex/3-2/DeepSetsHF_best_5FALL_3.0-10.0_had3x128_clf3x128_sum_M10_delta_auc.pdf}
+    \caption{Performance degradation induced by feature shuffling for different input variables.}
+    \label{fig:feature_shuffling}
+\end{figure}
+
+As shown in Fig.~\ref{fig:feature_shuffling}, shuffling angular variables ($|\Delta\phi|$ and $|\Delta\eta|$) produces the largest degradation in AUC, while shuffling hadron transverse momentum and charge results in significantly smaller performance loss. This demonstrates that the classifier primarily exploits spatial correlations within the hadronic system rather than purely kinematic quantities.
+
+The consistency between the observable-dependent score behavior and the perturbation-based analysis further indicates that the classifier response is closely connected to the geometric and topological characteristics of the hadronic environment associated with heavy-flavor decays. These results support the interpretation that the learned representation primarily encodes physically relevant structures in the hadronic system.
+
+
+\FloatBarrier
+
+\section{Summary}
+
+In this work, we investigate heavy-flavor electron classification using the hadronic environment represented as an unordered point cloud. Several set-based machine learning architectures, including DeepSets, Transformer, and Graph Neural Networks, are systematically compared to study the extent to which hadronic information alone can distinguish charm- and bottom-origin electrons. Comparable performance is observed across different architectures, indicating that the dominant limitation originates from the intrinsic similarity between charm- and bottom-related hadronic structures rather than model expressivity.
+
+By analyzing the classifier response together with physics-motivated observables and feature perturbation studies, we find that the learned representation is primarily sensitive to geometric and topological properties of the hadronic environment, particularly angular structure and spatial dispersion. The relatively weak dependence on electron-level kinematics further indicates that the classification performance mainly arises from correlations within the hadronic system.
+
+Compared with hand crafted observables, the learned representation captures substantial nontrivial discriminating information beyond a small set of manually constructed variables. At an experimentally relevant working point of approximately 40\% efficiency, the classifier achieves a purity close to 80\% on the test dataset. Relative to the handcrafted-observable BDT baseline, the learned representation improves the AUC from 0.685 to 0.781. These results demonstrate that the hadronic environment contains physically meaningful and interpretable information relevant for heavy-flavor electron classification, while the overall achievable separation remains intrinsically limited by the similarity of charm- and bottom-decay topologies.
+
+
+\bibliographystyle{elsarticle-num}
+\bibliography{ref}
+
+\end{document}
